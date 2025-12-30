@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/background_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../call_logs/presentation/providers/call_log_provider.dart';
 import '../../../recordings/presentation/providers/recording_provider.dart';
@@ -14,12 +16,84 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  bool _isAutoSyncEnabled = false;
+  bool _isAutoSyncLoading = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadCallLogs();
+      _loadAutoSyncStatus();
     });
+  }
+
+  Future<void> _loadAutoSyncStatus() async {
+    final isEnabled = await BackgroundServiceHelper.isAutoSyncEnabled();
+    if (mounted) {
+      setState(() {
+        _isAutoSyncEnabled = isEnabled;
+      });
+    }
+  }
+
+  Future<void> _toggleAutoSync(bool value) async {
+    setState(() {
+      _isAutoSyncLoading = true;
+    });
+
+    try {
+      // Request phone state permission if enabling
+      if (value) {
+        final phoneStatus = await Permission.phone.request();
+        if (!phoneStatus.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Phone permission required for auto-sync'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          setState(() {
+            _isAutoSyncLoading = false;
+          });
+          return;
+        }
+      }
+
+      await BackgroundServiceHelper.setAutoSyncEnabled(value);
+
+      if (mounted) {
+        setState(() {
+          _isAutoSyncEnabled = value;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value ? 'Auto-sync enabled! Calls will sync automatically.' : 'Auto-sync disabled',
+            ),
+            backgroundColor: value ? AppColors.success : AppColors.textSecondary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to toggle auto-sync: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAutoSyncLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadCallLogs() async {
@@ -55,6 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildRecordingsCard(recordingProvider),
               const SizedBox(height: 24),
               _buildUploadSection(recordingProvider),
+              const SizedBox(height: 24),
+              _buildAutoSyncSection(),
               const SizedBox(height: 24),
               if (recordingProvider.uploadedRecordings.isNotEmpty)
                 _buildUploadedRecordings(recordingProvider),
@@ -791,6 +867,124 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAutoSyncSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: _isAutoSyncEnabled
+              ? [Colors.green.shade400, Colors.green.shade700]
+              : [Colors.blueGrey.shade400, Colors.blueGrey.shade600],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: (_isAutoSyncEnabled ? Colors.green : Colors.blueGrey)
+                .withValues(alpha: 0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  _isAutoSyncEnabled ? Icons.sync : Icons.sync_disabled,
+                  color: AppColors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Auto-Sync',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isAutoSyncEnabled
+                          ? 'Calls sync automatically after each call'
+                          : 'Enable to auto-upload recordings',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.white.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _isAutoSyncLoading
+                  ? const SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: CircularProgressIndicator(
+                        color: AppColors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Switch(
+                      value: _isAutoSyncEnabled,
+                      onChanged: _toggleAutoSync,
+                      activeThumbColor: AppColors.white,
+                      activeTrackColor: AppColors.white.withValues(alpha: 0.5),
+                      inactiveThumbColor: AppColors.white,
+                      inactiveTrackColor: AppColors.white.withValues(alpha: 0.3),
+                    ),
+            ],
+          ),
+          if (_isAutoSyncEnabled) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.info_outline,
+                    color: AppColors.white,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Service running in background. New call recordings will be uploaded automatically.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.white.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

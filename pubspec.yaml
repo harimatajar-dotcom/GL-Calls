@@ -65,6 +65,12 @@ dependencies:
   # URL Launcher (for making calls and sending SMS)
   url_launcher: ^6.2.5
 
+  # Background Service (for auto-sync)
+  flutter_background_service: ^5.0.5
+  flutter_background_service_android: ^6.2.2
+  flutter_local_notifications: ^17.2.1+2
+  phone_state: ^3.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

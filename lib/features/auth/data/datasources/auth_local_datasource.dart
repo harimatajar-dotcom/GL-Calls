@@ -15,6 +15,8 @@ class AuthLocalDataSourceImpl implements AuthLocalDataSource {
 
   static const String cachedUserKey = 'CACHED_USER';
   static const String authTokenKey = 'AUTH_TOKEN';
+  static const String authTokenKeyAlt = 'auth_token'; // For background service
+  static const String vendorIdKey = 'vendor_id'; // For background service
 
   AuthLocalDataSourceImpl({required this.sharedPreferences});
 
@@ -24,6 +26,9 @@ class AuthLocalDataSourceImpl implements AuthLocalDataSource {
       final userJson = json.encode(user.toJson());
       await sharedPreferences.setString(cachedUserKey, userJson);
       await sharedPreferences.setString(authTokenKey, user.token);
+      // Also save with alternate keys for background service
+      await sharedPreferences.setString(authTokenKeyAlt, user.token);
+      await sharedPreferences.setInt(vendorIdKey, user.vendorId);
     } catch (e) {
       throw const CacheException(message: 'Failed to cache user data');
     }
@@ -53,6 +58,8 @@ class AuthLocalDataSourceImpl implements AuthLocalDataSource {
     try {
       await sharedPreferences.remove(cachedUserKey);
       await sharedPreferences.remove(authTokenKey);
+      await sharedPreferences.remove(authTokenKeyAlt);
+      await sharedPreferences.remove(vendorIdKey);
     } catch (e) {
       throw const CacheException(message: 'Failed to clear cache');
     }

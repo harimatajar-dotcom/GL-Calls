@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/recording_model.dart';
 
@@ -6,9 +8,11 @@ abstract class RecordingScannerDataSource {
   Future<List<RecordingModel>> scanForRecordings();
   Future<bool> requestPermission();
   Future<bool> hasPermission();
+  Future<int> getAudioDuration(String filePath);
 }
 
 class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
+  AudioPlayer? _audioPlayer;
   // Common call recording directories on Android
   static const List<String> _recordingPaths = [
     '/storage/emulated/0/Recordings/Call',
@@ -139,5 +143,18 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     }
 
     return false;
+  }
+
+  @override
+  Future<int> getAudioDuration(String filePath) async {
+    try {
+      _audioPlayer ??= AudioPlayer();
+      final duration = await _audioPlayer!.setFilePath(filePath);
+      await _audioPlayer!.stop();
+      return duration?.inSeconds ?? 0;
+    } catch (e) {
+      debugPrint('Error getting audio duration: $e');
+      return 0;
+    }
   }
 }
