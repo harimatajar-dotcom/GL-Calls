@@ -85,11 +85,16 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
     required String mimeType,
   }) async {
     try {
+      // Sanitize fileName: replace spaces with underscores and remove + character
+      final sanitizedFileName = fileName
+          .replaceAll('+', '')
+          .replaceAll(' ', '_');
+
       final response = await apiClient.dio.post(
         '/gl-dialer/voice/presigned-url',
         data: {
           'vendor_id': vendorId,
-          'file_name': fileName,
+          'file_name': sanitizedFileName,
           'mime_type': mimeType,
         },
       );

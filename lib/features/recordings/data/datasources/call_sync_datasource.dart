@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:dio/dio.dart';
 import '../../../../core/network/api_client.dart';
 import '../models/recording_model.dart';
@@ -39,57 +40,42 @@ class CallSyncData {
   }
 
   factory CallSyncData.fromRecording(RecordingModel recording) {
-    // Generate call_id from timestamp and phone number
-    final callId = '${recording.createdAt.millisecondsSinceEpoch}_${recording.phoneNumber ?? 'unknown'}';
+    // Generate random call_id
+    final callId = _generateRandomCallId();
 
-    // Format call_start_at as YYYY-MM-DD HH:MM:SS
-    final callStartAt = _formatDateTime(recording.createdAt);
+    // Format call_start_at as current sync time (YYYY-MM-DD HH:MM:SS)
+    final callStartAt = _formatDateTime(DateTime.now());
 
-    // Determine event type based on duration
+    // Determine event type: answered if has duration, otherwise missed
     final eventType = recording.duration > 0 ? 'answered' : 'missed';
 
-    // Direction - try to determine from filename or default to inbound
-    final direction = _determineDirection(recording.fileName);
+    // Direction: inbound if answered, outbound if missed
+    final direction = recording.duration > 0 ? 'inbound' : 'outbound';
 
     return CallSyncData(
       callId: callId,
-      phoneNumber: _formatPhoneNumber(recording.phoneNumber),
+      phoneNumber: recording.phoneNumber ?? 'unknown',
       callStartAt: callStartAt,
       duration: recording.duration,
       eventType: eventType,
       direction: direction,
-      // Use full CloudFront URL instead of just file path
+      // Use full CloudFront URL (S3 URL)
       recordingUrl: recording.uploadUrl,
     );
   }
 
+  /// Generate random call ID
+  static String _generateRandomCallId() {
+    final random = Random();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final randomPart = random.nextInt(999999).toString().padLeft(6, '0');
+    return 'CALL_${timestamp}_$randomPart';
+  }
+
+  /// Format datetime as YYYY-MM-DD HH:MM:SS
   static String _formatDateTime(DateTime dt) {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
-  }
-
-  static String _formatPhoneNumber(String? phoneNumber) {
-    if (phoneNumber == null || phoneNumber.isEmpty) {
-      return 'unknown';
-    }
-
-    // Remove any non-digit characters
-    String cleaned = phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
-
-    // Add country code if not present (assuming India)
-    if (cleaned.length == 10) {
-      cleaned = '91$cleaned';
-    }
-
-    return cleaned;
-  }
-
-  static String _determineDirection(String fileName) {
-    final lowerFileName = fileName.toLowerCase();
-    if (lowerFileName.contains('outgoing') || lowerFileName.contains('out')) {
-      return 'outbound';
-    }
-    return 'inbound';
   }
 }
 
@@ -131,6 +117,7 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
         for (final call in callsData) {
           _logGreen('✅ SYNCED: ${call.phoneNumber}');
           _logGreen('   Call ID: ${call.callId}');
+          _logGreen('   Call Start At: ${call.callStartAt}');
           _logGreen('   Duration: ${call.duration}s');
           _logGreen('   Event Type: ${call.eventType}');
           _logGreen('   Direction: ${call.direction}');

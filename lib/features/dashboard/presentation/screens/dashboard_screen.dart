@@ -79,11 +79,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               icon: const Icon(Icons.refresh, color: AppColors.white),
               onPressed: () {},
             ),
-          if (_currentIndex == 3)
-            IconButton(
-              icon: const Icon(Icons.settings_outlined, color: AppColors.white),
-              onPressed: () {},
-            ),
         ],
       ),
       body: IndexedStack(
