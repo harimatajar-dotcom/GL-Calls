@@ -124,9 +124,16 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
       final fileBytes = await file.readAsBytes();
       final fileSize = fileBytes.length;
 
-      // Use a separate Dio instance for S3 upload (no auth headers)
-      final s3Dio = Dio();
+      _logBlue('📦 File size: ${(fileSize / 1024).toStringAsFixed(1)} KB');
 
+      // Use a separate Dio instance for S3 upload with timeout
+      final s3Dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 30),
+      ));
+
+      int lastProgress = 0;
       final response = await s3Dio.put(
         uploadUrl,
         data: Stream.fromIterable([fileBytes]),
@@ -137,14 +144,31 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
           },
           contentType: mimeType,
         ),
+        onSendProgress: (sent, total) {
+          final progress = ((sent / total) * 100).toInt();
+          // Log every 20% to avoid spam
+          if (progress >= lastProgress + 20 || progress == 100) {
+            _logBlue('📤 Upload progress: $progress% ($sent / $total bytes)');
+            lastProgress = progress;
+          }
+        },
       );
 
       return response.statusCode == 200 || response.statusCode == 204;
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.sendTimeout) {
+        _logRed('❌ Upload timed out - slow network');
+      } else if (e.type == DioExceptionType.connectionTimeout) {
+        _logRed('❌ Connection timed out');
+      }
       throw Exception('Failed to upload to S3: ${e.message}');
     } catch (e) {
       throw Exception('Error uploading to S3: $e');
     }
+  }
+
+  void _logBlue(String message) {
+    print('\x1B[34m$message\x1B[0m');
   }
 
   Future<RecordingModel?> uploadRecording({

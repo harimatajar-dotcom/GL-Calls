@@ -8,6 +8,8 @@ import '../models/recording_model.dart';
 
 abstract class RecordingScannerDataSource {
   Future<List<RecordingModel>> scanForRecordings();
+  /// Scan for only the most recent unsynced recording (optimized for auto-sync)
+  Future<RecordingModel?> scanForLatestUnsyncedRecording();
   Future<bool> requestPermission();
   Future<bool> hasPermission();
   Future<int> getAudioDuration(String filePath);
@@ -117,14 +119,123 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     return recordings;
   }
 
-  /// Load call logs into cache
+  @override
+  Future<RecordingModel?> scanForLatestUnsyncedRecording() async {
+    _logCyan('🔍 OPTIMIZED SCAN: Looking for latest recording (last 1 hour)...');
+
+    final now = DateTime.now();
+    final oneHourAgo = now.subtract(const Duration(hours: 1));
+    RecordingModel? latestRecording;
+
+    // Load call logs only for the last 1 hour
+    await _loadCallLogsOptimized();
+
+    for (final basePath in _recordingPaths) {
+      final directory = Directory(basePath);
+      if (await directory.exists()) {
+        try {
+          await for (final entity in directory.list(recursive: true)) {
+            if (entity is File) {
+              final extension = entity.path.toLowerCase();
+              if (_audioExtensions.any((ext) => extension.endsWith(ext))) {
+                try {
+                  final stat = await entity.stat();
+
+                  // Skip files older than 1 hour
+                  if (stat.modified.isBefore(oneHourAgo)) {
+                    continue;
+                  }
+
+                  final fileName = entity.path.split('/').last;
+
+                  // Try to extract phone number from filename first
+                  String? phoneNumber = _extractPhoneNumber(fileName);
+                  CallType callType = CallType.unknown;
+                  String? contactName;
+
+                  // Match with call log to get phone number and call type
+                  final matchedCall = _findMatchingCallLog(stat.modified);
+                  if (matchedCall != null) {
+                    phoneNumber ??= matchedCall.number;
+                    contactName = matchedCall.name;
+                    callType = _mapCallType(matchedCall.callType);
+                    _logCyan('📞 MATCHED: $fileName → ${matchedCall.number} (${matchedCall.name ?? 'Unknown'})');
+                  }
+
+                  final recording = RecordingModel(
+                    fileName: fileName,
+                    filePath: entity.path,
+                    phoneNumber: phoneNumber,
+                    contactName: contactName,
+                    duration: 0,
+                    fileSize: stat.size,
+                    createdAt: stat.modified,
+                    isSynced: false,
+                    callType: callType,
+                  );
+
+                  // Keep the most recent recording
+                  if (latestRecording == null ||
+                      recording.createdAt.isAfter(latestRecording.createdAt)) {
+                    latestRecording = recording;
+                  }
+                } catch (e) {
+                  // Skip files we can't read
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // Skip directories we can't access
+        }
+      }
+    }
+
+    if (latestRecording != null) {
+      _logCyan('✅ Found latest recording: ${latestRecording.fileName}');
+    } else {
+      _logCyan('ℹ️ No recent recordings found in last 1 hour');
+    }
+
+    return latestRecording;
+  }
+
+  /// Load call logs optimized for last 1 hour only
+  Future<void> _loadCallLogsOptimized() async {
+    try {
+      final hasAccess = await Permission.phone.status;
+      if (hasAccess.isGranted) {
+        final now = DateTime.now();
+        final lastHour = now.subtract(const Duration(hours: 1));
+
+        final entries = await call_log.CallLog.query(
+          dateFrom: lastHour.millisecondsSinceEpoch,
+          dateTo: now.millisecondsSinceEpoch,
+        );
+        _callLogCache = entries.toList();
+        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries (last 1h - optimized)');
+      }
+    } catch (e) {
+      debugPrint('Error loading call logs: $e');
+      _callLogCache = [];
+    }
+  }
+
+  /// Load call logs into cache (only last 24 hours for performance)
   Future<void> _loadCallLogs() async {
     try {
       final hasAccess = await Permission.phone.status;
       if (hasAccess.isGranted) {
-        final entries = await call_log.CallLog.get();
+        // Only load call logs from last 24 hours for performance
+        final now = DateTime.now();
+        final last24Hours = now.subtract(const Duration(hours: 24));
+
+        final entries = await call_log.CallLog.query(
+          dateFrom: last24Hours.millisecondsSinceEpoch,
+          dateTo: now.millisecondsSinceEpoch,
+        );
         _callLogCache = entries.toList();
-        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries');
+        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries (last 24h)');
       }
     } catch (e) {
       debugPrint('Error loading call logs: $e');

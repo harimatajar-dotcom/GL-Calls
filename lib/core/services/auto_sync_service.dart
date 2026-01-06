@@ -110,7 +110,7 @@ class AutoSyncService {
   Future<void> _autoSyncLatestRecording() async {
     try {
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      _logGreen('🔄 AUTO-SYNC STARTED');
+      _logGreen('🔄 AUTO-SYNC STARTED (OPTIMIZED)');
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
       // Get vendor ID from shared preferences
@@ -122,26 +122,12 @@ class AutoSyncService {
         return;
       }
 
-      // Scan for new recordings
-      _logGreen('Scanning for new recordings...');
-      final scannedRecordings = await _scannerDataSource.scanForRecordings();
+      // Use optimized scan - only checks last 1 hour
+      _logGreen('Scanning for latest recording (optimized - last 1 hour)...');
+      final latestRecording = await _scannerDataSource.scanForLatestUnsyncedRecording();
 
-      if (scannedRecordings.isEmpty) {
-        _logRed('No recordings found on device');
-        return;
-      }
-
-      // Get existing recordings from database
-      final existingRecordings = await _databaseDataSource.getAllRecordings();
-      final existingPaths = existingRecordings.map((r) => r.filePath).toSet();
-
-      // Find new recordings
-      final newRecordings = scannedRecordings
-          .where((r) => !existingPaths.contains(r.filePath))
-          .toList();
-
-      if (newRecordings.isEmpty) {
-        _logBlue('No new recordings to sync');
+      if (latestRecording == null) {
+        _logBlue('No recent recordings found');
 
         // Check for existing unuploaded recordings
         final latestUnuploaded = await _databaseDataSource.getLatestNotUploadedRecording();
@@ -155,12 +141,28 @@ class AutoSyncService {
         return;
       }
 
-      // Save new recordings to database
-      await _databaseDataSource.insertRecordings(newRecordings);
-      _logGreen('Saved ${newRecordings.length} new recording(s) to database');
+      // Check if already in database
+      final existingRecordings = await _databaseDataSource.getAllRecordings();
+      final existingPaths = existingRecordings.map((r) => r.filePath).toSet();
 
-      // Get the latest recording (just saved)
-      final latestRecording = newRecordings.first;
+      if (existingPaths.contains(latestRecording.filePath)) {
+        _logBlue('Recording already in database, checking upload status...');
+
+        // Check for existing unuploaded recordings
+        final latestUnuploaded = await _databaseDataSource.getLatestNotUploadedRecording();
+        if (latestUnuploaded == null) {
+          _logBlue('All recordings already uploaded');
+          return;
+        }
+
+        // Upload the latest unuploaded recording
+        await _uploadAndSync(latestUnuploaded, vendorId);
+        return;
+      }
+
+      // Save new recording to database
+      await _databaseDataSource.insertRecordings([latestRecording]);
+      _logGreen('Saved new recording to database');
 
       // Upload and sync
       await _uploadAndSync(latestRecording, vendorId);
