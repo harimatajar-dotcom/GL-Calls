@@ -107,6 +107,13 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
         },
       );
 
+      // Log raw API response in yellow
+      _logYellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      _logYellow('📡 RAW API RESPONSE');
+      _logYellow('   Status Code: ${response.statusCode}');
+      _logYellow('   Response Data: ${response.data}');
+      _logYellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
       if (response.statusCode == 200 || response.statusCode == 202) {
         _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         _logGreen('✅ CALL SYNC API RESPONSE');
@@ -147,6 +154,10 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
 
   void _logBlue(String message) {
     print('\x1B[34m$message\x1B[0m');
+  }
+
+  void _logYellow(String message) {
+    print('\x1B[33m$message\x1B[0m');
   }
 
   void _logRed(String message) {

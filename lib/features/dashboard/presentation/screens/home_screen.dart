@@ -15,17 +15,37 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   bool _isAutoSyncEnabled = false;
   bool _isAutoSyncLoading = false;
+  AnimationController? _pulseController;
+  Animation<double>? _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
+    _initAnimation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadCallLogs();
       _loadAutoSyncStatus();
     });
+  }
+
+  void _initAnimation() {
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController!, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAutoSyncStatus() async {
@@ -126,8 +146,8 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 24),
               _buildStatsGrid(callLogProvider),
               const SizedBox(height: 24),
-              _buildRecordingsCard(recordingProvider),
-              const SizedBox(height: 24),
+              // _buildRecordingsCard(recordingProvider),
+              // const SizedBox(height: 24),
               _buildUploadSection(recordingProvider),
               const SizedBox(height: 24),
               _buildAutoSyncSection(),
@@ -136,8 +156,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildUploadedRecordings(recordingProvider),
               if (recordingProvider.uploadedRecordings.isNotEmpty)
                 const SizedBox(height: 24),
-              _buildQuickActions(callLogProvider),
-              const SizedBox(height: 24),
+              // _buildQuickActions(callLogProvider),
+              // const SizedBox(height: 24),
               _buildRecentCalls(callLogProvider),
             ],
           ),
@@ -246,33 +266,37 @@ class _HomeScreenState extends State<HomeScreen> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisCount: 2,
-      mainAxisSpacing: 16,
-      crossAxisSpacing: 16,
-      childAspectRatio: 1.5,
+      mainAxisSpacing: 14,
+      crossAxisSpacing: 14,
+      childAspectRatio: 1.45,
       children: [
         _buildStatCard(
-          icon: Icons.call_received,
+          icon: Icons.call_received_rounded,
           label: 'Incoming',
           value: incomingCount.toString(),
           color: AppColors.success,
+          gradientColors: [AppColors.success, Colors.green.shade700],
         ),
         _buildStatCard(
-          icon: Icons.call_made,
+          icon: Icons.call_made_rounded,
           label: 'Outgoing',
           value: outgoingCount.toString(),
-          color: AppColors.primary,
+          color: AppColors.warning,
+          gradientColors: [AppColors.warning, Colors.orange.shade700],
         ),
         _buildStatCard(
-          icon: Icons.call_missed,
+          icon: Icons.call_missed_rounded,
           label: 'Missed',
           value: missedCount.toString(),
-          color: AppColors.warning,
+          color: AppColors.error,
+          gradientColors: [AppColors.error, Colors.red.shade700],
         ),
         _buildStatCard(
-          icon: Icons.phone,
+          icon: Icons.phone_rounded,
           label: 'Total',
           value: totalCount.toString(),
           color: Colors.purple,
+          gradientColors: [Colors.purple.shade400, Colors.purple.shade700],
         ),
       ],
     );
@@ -283,55 +307,109 @@ class _HomeScreenState extends State<HomeScreen> {
     required String label,
     required String value,
     required Color color,
+    required List<Color> gradientColors,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color, size: 20),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxHeight < 100;
+        final iconSize = isCompact ? 16.0 : 18.0;
+        final iconPadding = isCompact ? 8.0 : 10.0;
+        final valueFontSize = isCompact ? 18.0 : 20.0;
+        final labelFontSize = isCompact ? 13.0 : 14.0;
+        final padding = isCompact ? 12.0 : 14.0;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: color.withValues(alpha: 0.1),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.12),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+                spreadRadius: 0,
               ),
-              const Spacer(),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
+              BoxShadow(
+                color: AppColors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 14,
-              color: AppColors.textSecondary,
+          child: Padding(
+            padding: EdgeInsets.all(padding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.max,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Icon with gradient
+                    Container(
+                      padding: EdgeInsets.all(iconPadding),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: gradientColors,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: color.withValues(alpha: 0.4),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Icon(icon, color: AppColors.white, size: iconSize),
+                    ),
+                    // Value
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        value,
+                        style: TextStyle(
+                          fontSize: valueFontSize,
+                          fontWeight: FontWeight.w800,
+                          color: color,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: labelFontSize,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                Text(
+                  'calls',
+                  style: TextStyle(
+                    fontSize: isCompact ? 10.0 : 11.0,
+                    color: AppColors.textSecondary.withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -516,44 +594,89 @@ class _HomeScreenState extends State<HomeScreen> {
     final recentCalls = provider.callLogs.take(5).toList();
 
     if (recentCalls.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.phone_outlined,
-              size: 48,
-              color: AppColors.textHint,
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'No call logs yet',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 14,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Recent Calls',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Your recent calls will appear here',
-              style: TextStyle(
-                color: AppColors.textHint,
-                fontSize: 12,
+              const SizedBox(height: 2),
+              Text(
+                'Last 5 calls from your device',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.black.withValues(alpha: 0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-          ],
-        ),
+            child: Column(
+              children: [
+                AnimatedBuilder(
+                  animation: _pulseAnimation!,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: _pulseAnimation?.value ?? 1.0,
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.phone_outlined,
+                          size: 48,
+                          color: AppColors.primary.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'No call logs yet',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Your recent calls will appear here\nonce you make or receive calls',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       );
     }
 
@@ -563,13 +686,26 @@ class _HomeScreenState extends State<HomeScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Recent Calls',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Recent Calls',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Last 5 calls from your device',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
             Text(
               '${provider.callLogs.length} total',
@@ -686,185 +822,330 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.teal.shade400,
-            Colors.teal.shade700,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.1),
+          width: 1,
         ),
-        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.teal.withValues(alpha: 0.3),
+            color: AppColors.primary.withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: AppColors.black.withValues(alpha: 0.04),
             blurRadius: 10,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.cloud_upload,
-                  color: AppColors.white,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Upload & Sync Call',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Upload recording to cloud & sync call details',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.white.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (provider.uploadStatus == UploadStatus.error && provider.errorMessage != null)
-            Container(
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: AppColors.white, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      provider.errorMessage!,
-                      style: const TextStyle(color: AppColors.white, fontSize: 12),
-                    ),
-                  ),
+          // Header section with gradient accent
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.primary.withValues(alpha: 0.03),
+                  AppColors.white,
                 ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             ),
-          if (provider.uploadStatus == UploadStatus.success && provider.lastUploadedRecording != null)
-            Container(
-              padding: const EdgeInsets.all(12),
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: AppColors.success.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.cloud_done, color: AppColors.white, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Uploaded: ${provider.lastUploadedRecording!.fileName}',
-                          style: const TextStyle(color: AppColors.white, fontSize: 12),
-                        ),
+            child: Row(
+              children: [
+                // Icon with gradient and shadow
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppColors.primary, AppColors.primaryDark],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Row(
+                  child: const Icon(
+                    Icons.cloud_upload_rounded,
+                    color: AppColors.white,
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.sync, color: AppColors.white, size: 16),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Call synced to server',
+                      const Text(
+                        'Upload & Sync Call',
                         style: TextStyle(
-                          color: AppColors.white.withValues(alpha: 0.8),
-                          fontSize: 11,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Securely upload recordings to cloud',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary.withValues(alpha: 0.8),
                         ),
                       ),
                     ],
                   ),
+                ),
+                // Status indicator
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: provider.recordings.isEmpty
+                        ? AppColors.textHint.withValues(alpha: 0.1)
+                        : AppColors.success.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: provider.recordings.isEmpty
+                              ? AppColors.textHint
+                              : AppColors.success,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        provider.recordings.isEmpty ? 'No files' : 'Ready',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: provider.recordings.isEmpty
+                              ? AppColors.textHint
+                              : AppColors.success,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Divider
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  AppColors.divider.withValues(alpha: 0.5),
+                  Colors.transparent,
                 ],
               ),
             ),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: provider.isUploading || provider.recordings.isEmpty
-                  ? null
-                  : () async {
-                      await provider.uploadLatestRecording(vendorId);
-                    },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.white,
-                foregroundColor: Colors.teal.shade700,
-                disabledBackgroundColor: AppColors.white.withValues(alpha: 0.5),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: provider.isUploading
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          // Content section
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                if (provider.uploadStatus == UploadStatus.error && provider.errorMessage != null)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.error.withValues(alpha: 0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
                       children: [
-                        SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.teal.shade700,
-                            strokeWidth: 2,
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppColors.error.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
                           ),
+                          child: const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 18),
                         ),
                         const SizedBox(width: 12),
-                        Text(
-                          'Uploading & Syncing...',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.teal.shade700,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cloud_upload, color: Colors.teal.shade700),
-                        const SizedBox(width: 8),
-                        Text(
-                          provider.recordings.isEmpty
-                              ? 'No Recordings Available'
-                              : 'Upload & Sync Latest Call',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.teal.shade700,
+                        Expanded(
+                          child: Text(
+                            provider.errorMessage!,
+                            style: const TextStyle(
+                              color: AppColors.error,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
                     ),
+                  ),
+                if (provider.uploadStatus == UploadStatus.success && provider.lastUploadedRecording != null)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.success.withValues(alpha: 0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: AppColors.success.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.cloud_done_rounded, color: AppColors.success, size: 18),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Uploaded: ${provider.lastUploadedRecording!.fileName}',
+                                style: const TextStyle(
+                                  color: AppColors.success,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const SizedBox(width: 36),
+                            Icon(Icons.check_circle, color: AppColors.success.withValues(alpha: 0.7), size: 14),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Call synced to server',
+                              style: TextStyle(
+                                color: AppColors.success.withValues(alpha: 0.8),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                // Upload button with gradient
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: provider.isUploading || provider.recordings.isEmpty
+                        ? []
+                        : [
+                            BoxShadow(
+                              color: AppColors.primary.withValues(alpha: 0.3),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                  ),
+                  child: ElevatedButton(
+                    onPressed: provider.isUploading || provider.recordings.isEmpty
+                        ? null
+                        : () async {
+                            await provider.uploadLatestRecording(vendorId);
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.white,
+                      disabledBackgroundColor: AppColors.scaffoldBackground,
+                      disabledForegroundColor: AppColors.textHint,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: provider.isUploading
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  color: AppColors.white,
+                                  strokeWidth: 2.5,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Text(
+                                'Uploading & Syncing...',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.cloud_upload_rounded,
+                                size: 22,
+                                color: provider.recordings.isEmpty
+                                    ? AppColors.textHint
+                                    : AppColors.white,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                provider.recordings.isEmpty
+                                    ? 'No Recordings Available'
+                                    : 'Upload & Sync Latest Call',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  letterSpacing: 0.2,
+                                  color: provider.recordings.isEmpty
+                                      ? AppColors.textHint
+                                      : AppColors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -873,115 +1154,199 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAutoSyncSection() {
+    final statusColor = _isAutoSyncEnabled ? AppColors.success : Colors.blueGrey;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: _isAutoSyncEnabled
-              ? [Colors.green.shade400, Colors.green.shade700]
-              : [Colors.blueGrey.shade400, Colors.blueGrey.shade600],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.1),
+          width: 1,
         ),
-        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: (_isAutoSyncEnabled ? Colors.green : Colors.blueGrey)
-                .withValues(alpha: 0.3),
+            color: statusColor.withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: AppColors.black.withValues(alpha: 0.04),
             blurRadius: 10,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
+          // Header section
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  statusColor.withValues(alpha: 0.03),
+                  AppColors.white,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              children: [
+                // Icon with gradient and shadow
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: _isAutoSyncEnabled
+                          ? [AppColors.success, Colors.green.shade700]
+                          : [Colors.blueGrey.shade400, Colors.blueGrey.shade600],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: statusColor.withValues(alpha: 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    _isAutoSyncEnabled ? Icons.sync_rounded : Icons.sync_disabled_rounded,
+                    color: AppColors.white,
+                    size: 26,
+                  ),
                 ),
-                child: Icon(
-                  _isAutoSyncEnabled ? Icons.sync : Icons.sync_disabled,
-                  color: AppColors.white,
-                  size: 28,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Auto-Sync',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isAutoSyncEnabled
+                            ? 'Syncs automatically after each call'
+                            : 'Enable to auto-upload recordings',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Toggle switch with loading state
+                _isAutoSyncLoading
+                    ? Container(
+                        padding: const EdgeInsets.all(8),
+                        child: SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            color: statusColor,
+                            strokeWidth: 2.5,
+                          ),
+                        ),
+                      )
+                    : Transform.scale(
+                        scale: 0.9,
+                        child: Switch(
+                          value: _isAutoSyncEnabled,
+                          onChanged: _toggleAutoSync,
+                          activeThumbColor: AppColors.success,
+                          activeTrackColor: AppColors.success.withValues(alpha: 0.3),
+                          inactiveThumbColor: Colors.blueGrey.shade400,
+                          inactiveTrackColor: Colors.blueGrey.withValues(alpha: 0.2),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+          // Info section when enabled
+          if (_isAutoSyncEnabled) ...[
+            // Divider
+            Container(
+              height: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    AppColors.divider.withValues(alpha: 0.5),
+                    Colors.transparent,
+                  ],
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            // Status info
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.success.withValues(alpha: 0.15),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
                   children: [
-                    const Text(
-                      'Auto-Sync',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.white,
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.check_circle_rounded,
+                        color: AppColors.success,
+                        size: 18,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _isAutoSyncEnabled
-                          ? 'Calls sync automatically after each call'
-                          : 'Enable to auto-upload recordings',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.white.withValues(alpha: 0.8),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Background Service Active',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.success,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'New recordings will be uploaded automatically',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-              _isAutoSyncLoading
-                  ? const SizedBox(
-                      height: 24,
-                      width: 24,
-                      child: CircularProgressIndicator(
-                        color: AppColors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : Switch(
-                      value: _isAutoSyncEnabled,
-                      onChanged: _toggleAutoSync,
-                      activeThumbColor: AppColors.white,
-                      activeTrackColor: AppColors.white.withValues(alpha: 0.5),
-                      inactiveThumbColor: AppColors.white,
-                      inactiveTrackColor: AppColors.white.withValues(alpha: 0.3),
-                    ),
-            ],
-          ),
-          if (_isAutoSyncEnabled) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.info_outline,
-                    color: AppColors.white,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Service running in background. New call recordings will be uploaded automatically.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.white.withValues(alpha: 0.9),
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ),
           ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/country_codes.dart';
 import '../../../../core/error/exceptions.dart';
+import '../../../../core/services/notification_service.dart';
 import '../../../../core/usecases/usecase.dart';
 import '../../domain/entities/user_entity.dart';
 import '../../domain/usecases/login_usecase.dart';
@@ -75,6 +76,10 @@ class AuthProvider extends ChangeNotifier {
       );
       _status = AuthStatus.authenticated;
       notifyListeners();
+
+      // Add welcome notification
+      await NotificationService.addWelcomeNotification(_user?.name ?? 'User');
+
       return true;
     } on AuthenticationException catch (e) {
       _status = AuthStatus.error;
