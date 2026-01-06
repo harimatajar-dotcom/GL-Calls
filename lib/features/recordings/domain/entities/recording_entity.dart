@@ -1,3 +1,11 @@
+/// Call type enum to represent call direction
+enum CallType {
+  incoming,
+  outgoing,
+  missed,
+  unknown,
+}
+
 class RecordingEntity {
   final int? id;
   final String fileName;
@@ -14,6 +22,7 @@ class RecordingEntity {
   final String? uploadUrl; // S3 public URL
   final String? s3Path; // S3 file path for sync API
   final DateTime? uploadedAt;
+  final CallType callType; // Call direction from call log
 
   const RecordingEntity({
     this.id,
@@ -31,6 +40,7 @@ class RecordingEntity {
     this.uploadUrl,
     this.s3Path,
     this.uploadedAt,
+    this.callType = CallType.unknown,
   });
 
   String get displayName {

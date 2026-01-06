@@ -20,7 +20,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -66,6 +66,10 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE recordings ADD COLUMN s3_path TEXT');
       await db.execute('ALTER TABLE recordings ADD COLUMN uploaded_at INTEGER');
     }
+    if (oldVersion < 4) {
+      // Add call_type column for tracking call direction
+      await db.execute('ALTER TABLE recordings ADD COLUMN call_type INTEGER DEFAULT 3');
+    }
   }
 
   Future<void> _createRecordingsTable(Database db) async {
@@ -86,6 +90,7 @@ class DatabaseHelper {
         upload_url TEXT,
         s3_path TEXT,
         uploaded_at INTEGER,
+        call_type INTEGER DEFAULT 3,
         UNIQUE(file_path)
       )
     ''');

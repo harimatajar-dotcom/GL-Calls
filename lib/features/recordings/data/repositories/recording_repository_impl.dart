@@ -135,14 +135,39 @@ class RecordingRepositoryImpl implements RecordingRepository {
     if (uploadedRecording is RecordingModel) {
       await callSyncDataSource.syncCall(CallSyncData.fromRecording(uploadedRecording));
     } else {
+      // Determine direction from actual call type
+      String direction;
+      switch (uploadedRecording.callType) {
+        case CallType.incoming:
+          direction = 'inbound';
+          break;
+        case CallType.outgoing:
+          direction = 'outbound';
+          break;
+        case CallType.missed:
+          direction = 'inbound';
+          break;
+        case CallType.unknown:
+          direction = 'inbound';
+          break;
+      }
+
+      // Determine event type
+      String eventType;
+      if (uploadedRecording.callType == CallType.missed) {
+        eventType = 'missed';
+      } else {
+        eventType = uploadedRecording.duration > 0 ? 'answered' : 'missed';
+      }
+
       // Create CallSyncData manually from entity
       final callData = CallSyncData(
         callId: '${uploadedRecording.createdAt.millisecondsSinceEpoch}_${uploadedRecording.phoneNumber ?? 'unknown'}',
         phoneNumber: _formatPhoneNumber(uploadedRecording.phoneNumber),
         callStartAt: _formatDateTime(uploadedRecording.createdAt),
         duration: uploadedRecording.duration,
-        eventType: uploadedRecording.duration > 0 ? 'answered' : 'missed',
-        direction: 'inbound',
+        eventType: eventType,
+        direction: direction,
         // Use full CloudFront URL instead of s3Path
         recordingUrl: uploadedRecording.uploadUrl,
       );

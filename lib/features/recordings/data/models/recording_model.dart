@@ -17,6 +17,7 @@ class RecordingModel extends RecordingEntity {
     super.uploadUrl,
     super.s3Path,
     super.uploadedAt,
+    super.callType,
   });
 
   factory RecordingModel.fromEntity(RecordingEntity entity) {
@@ -36,6 +37,7 @@ class RecordingModel extends RecordingEntity {
       uploadUrl: entity.uploadUrl,
       s3Path: entity.s3Path,
       uploadedAt: entity.uploadedAt,
+      callType: entity.callType,
     );
   }
 
@@ -60,6 +62,7 @@ class RecordingModel extends RecordingEntity {
       uploadedAt: map['uploaded_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['uploaded_at'] as int)
           : null,
+      callType: CallType.values[(map['call_type'] as int?) ?? 3],
     );
   }
 
@@ -80,6 +83,7 @@ class RecordingModel extends RecordingEntity {
       'upload_url': uploadUrl,
       's3_path': s3Path,
       'uploaded_at': uploadedAt?.millisecondsSinceEpoch,
+      'call_type': callType.index,
     };
   }
 
@@ -99,6 +103,7 @@ class RecordingModel extends RecordingEntity {
     String? uploadUrl,
     String? s3Path,
     DateTime? uploadedAt,
+    CallType? callType,
   }) {
     return RecordingModel(
       id: id ?? this.id,
@@ -116,6 +121,7 @@ class RecordingModel extends RecordingEntity {
       uploadUrl: uploadUrl ?? this.uploadUrl,
       s3Path: s3Path ?? this.s3Path,
       uploadedAt: uploadedAt ?? this.uploadedAt,
+      callType: callType ?? this.callType,
     );
   }
 }

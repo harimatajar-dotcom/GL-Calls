@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:dio/dio.dart';
 import '../../../../core/network/api_client.dart';
+import '../../domain/entities/recording_entity.dart';
 import '../models/recording_model.dart';
 
 class CallSyncData {
@@ -46,11 +47,31 @@ class CallSyncData {
     // Format call_start_at as current sync time (YYYY-MM-DD HH:MM:SS)
     final callStartAt = _formatDateTime(DateTime.now());
 
-    // Determine event type: answered if has duration, otherwise missed
-    final eventType = recording.duration > 0 ? 'answered' : 'missed';
+    // Determine event type based on call type and duration
+    String eventType;
+    if (recording.callType == CallType.missed) {
+      eventType = 'missed';
+    } else {
+      eventType = recording.duration > 0 ? 'answered' : 'missed';
+    }
 
-    // Direction: inbound if answered, outbound if missed
-    final direction = recording.duration > 0 ? 'inbound' : 'outbound';
+    // Determine direction from actual call type
+    String direction;
+    switch (recording.callType) {
+      case CallType.incoming:
+        direction = 'inbound';
+        break;
+      case CallType.outgoing:
+        direction = 'outbound';
+        break;
+      case CallType.missed:
+        direction = 'inbound'; // Missed calls are typically incoming
+        break;
+      case CallType.unknown:
+        // Fallback: use inbound as default
+        direction = 'inbound';
+        break;
+    }
 
     return CallSyncData(
       callId: callId,

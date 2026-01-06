@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'package:call_log/call_log.dart' as call_log;
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../domain/entities/recording_entity.dart';
 import '../models/recording_model.dart';
 
 abstract class RecordingScannerDataSource {
@@ -13,6 +15,8 @@ abstract class RecordingScannerDataSource {
 
 class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
   AudioPlayer? _audioPlayer;
+  List<call_log.CallLogEntry>? _callLogCache;
+
   // Common call recording directories on Android
   static const List<String> _recordingPaths = [
     '/storage/emulated/0/Recordings/Call',
@@ -46,6 +50,9 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
   Future<List<RecordingModel>> scanForRecordings() async {
     final recordings = <RecordingModel>[];
 
+    // Load call logs for matching
+    await _loadCallLogs();
+
     for (final basePath in _recordingPaths) {
       final directory = Directory(basePath);
       if (await directory.exists()) {
@@ -58,17 +65,39 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                   final stat = await entity.stat();
                   final fileName = entity.path.split('/').last;
 
-                  // Try to extract phone number from filename
-                  final phoneNumber = _extractPhoneNumber(fileName);
+                  // Try to extract phone number from filename first
+                  String? phoneNumber = _extractPhoneNumber(fileName);
+                  CallType callType = CallType.unknown;
+                  String? contactName;
+
+                  // If no phone number found, try to match with call log
+                  if (phoneNumber == null) {
+                    final matchedCall = _findMatchingCallLog(stat.modified);
+                    if (matchedCall != null) {
+                      phoneNumber = matchedCall.number;
+                      contactName = matchedCall.name;
+                      callType = _mapCallType(matchedCall.callType);
+                      _logCyan('📞 MATCHED: $fileName → ${matchedCall.number} (${matchedCall.name ?? 'Unknown'})');
+                    }
+                  } else {
+                    // Phone number found in filename, still try to get call type
+                    final matchedCall = _findMatchingCallLog(stat.modified);
+                    if (matchedCall != null) {
+                      callType = _mapCallType(matchedCall.callType);
+                      contactName = matchedCall.name;
+                    }
+                  }
 
                   recordings.add(RecordingModel(
                     fileName: fileName,
                     filePath: entity.path,
                     phoneNumber: phoneNumber,
+                    contactName: contactName,
                     duration: 0, // Will be updated when playing
                     fileSize: stat.size,
                     createdAt: stat.modified,
                     isSynced: false,
+                    callType: callType,
                   ));
                 } catch (e) {
                   // Skip files we can't read
@@ -86,6 +115,59 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     recordings.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
     return recordings;
+  }
+
+  /// Load call logs into cache
+  Future<void> _loadCallLogs() async {
+    try {
+      final hasAccess = await Permission.phone.status;
+      if (hasAccess.isGranted) {
+        final entries = await call_log.CallLog.get();
+        _callLogCache = entries.toList();
+        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries');
+      }
+    } catch (e) {
+      debugPrint('Error loading call logs: $e');
+      _callLogCache = [];
+    }
+  }
+
+  /// Find matching call log entry by timestamp (within 5 minutes tolerance)
+  call_log.CallLogEntry? _findMatchingCallLog(DateTime recordingTime) {
+    if (_callLogCache == null || _callLogCache!.isEmpty) return null;
+
+    const toleranceMinutes = 5;
+    call_log.CallLogEntry? bestMatch;
+    int smallestDiff = toleranceMinutes * 60 * 1000 + 1; // milliseconds
+
+    for (final entry in _callLogCache!) {
+      if (entry.timestamp == null) continue;
+
+      final callTime = DateTime.fromMillisecondsSinceEpoch(entry.timestamp!);
+      final diff = (recordingTime.millisecondsSinceEpoch - callTime.millisecondsSinceEpoch).abs();
+
+      // Within tolerance and closer than previous match
+      if (diff < toleranceMinutes * 60 * 1000 && diff < smallestDiff) {
+        smallestDiff = diff;
+        bestMatch = entry;
+      }
+    }
+
+    return bestMatch;
+  }
+
+  /// Map call_log package CallType to our CallType
+  CallType _mapCallType(call_log.CallType? type) {
+    switch (type) {
+      case call_log.CallType.incoming:
+        return CallType.incoming;
+      case call_log.CallType.outgoing:
+        return CallType.outgoing;
+      case call_log.CallType.missed:
+        return CallType.missed;
+      default:
+        return CallType.unknown;
+    }
   }
 
   String? _extractPhoneNumber(String fileName) {
@@ -110,6 +192,9 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
   Future<bool> requestPermission() async {
     // Request storage permissions
     if (Platform.isAndroid) {
+      // Request phone permission for call logs
+      await Permission.phone.request();
+
       // For Android 13+
       final audioStatus = await Permission.audio.request();
       if (audioStatus.isGranted) return true;
@@ -156,5 +241,9 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
       debugPrint('Error getting audio duration: $e');
       return 0;
     }
+  }
+
+  void _logCyan(String message) {
+    print('\x1B[36m$message\x1B[0m');
   }
 }
