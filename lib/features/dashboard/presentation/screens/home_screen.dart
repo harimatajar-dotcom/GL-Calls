@@ -18,6 +18,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   bool _isAutoSyncEnabled = false;
   bool _isAutoSyncLoading = false;
+  bool _isAutoDirectSyncEnabled = false;
+  bool _isAutoDirectSyncLoading = false;
   AnimationController? _pulseController;
   Animation<double>? _pulseAnimation;
 
@@ -28,6 +30,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadCallLogs();
       _loadAutoSyncStatus();
+      _loadAutoDirectSyncStatus();
     });
   }
 
@@ -54,6 +57,74 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _isAutoSyncEnabled = isEnabled;
       });
+    }
+  }
+
+  Future<void> _loadAutoDirectSyncStatus() async {
+    final isEnabled = await BackgroundServiceHelper.isAutoDirectSyncEnabled();
+    if (mounted) {
+      setState(() {
+        _isAutoDirectSyncEnabled = isEnabled;
+      });
+    }
+  }
+
+  Future<void> _toggleAutoDirectSync(bool value) async {
+    setState(() {
+      _isAutoDirectSyncLoading = true;
+    });
+
+    try {
+      // Request phone state permission if enabling
+      if (value) {
+        final phoneStatus = await Permission.phone.request();
+        if (!phoneStatus.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Phone permission required for auto direct sync'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          setState(() {
+            _isAutoDirectSyncLoading = false;
+          });
+          return;
+        }
+      }
+
+      await BackgroundServiceHelper.setAutoDirectSyncEnabled(value);
+
+      if (mounted) {
+        setState(() {
+          _isAutoDirectSyncEnabled = value;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value ? 'Auto Direct Sync enabled! Calls will sync automatically.' : 'Auto Direct Sync disabled',
+            ),
+            backgroundColor: value ? AppColors.success : AppColors.textSecondary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to toggle auto direct sync: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAutoDirectSyncLoading = false;
+        });
+      }
     }
   }
 
@@ -151,6 +222,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               _buildUploadSection(recordingProvider),
               const SizedBox(height: 24),
               _buildAutoSyncSection(),
+              const SizedBox(height: 24),
+              _buildDirectSyncSection(recordingProvider),
               const SizedBox(height: 24),
               if (recordingProvider.uploadedRecordings.isNotEmpty)
                 _buildUploadedRecordings(recordingProvider),
@@ -1350,6 +1423,352 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirectSyncSection(RecordingProvider provider) {
+    final isDirectSyncing = provider.isDirectSyncing;
+    final directSyncStatus = provider.directSyncStatus;
+
+    Color statusColor;
+    IconData statusIcon;
+    String statusText;
+
+    switch (directSyncStatus) {
+      case DirectSyncStatus.syncing:
+        statusColor = Colors.orange;
+        statusIcon = Icons.sync;
+        statusText = 'Syncing...';
+        break;
+      case DirectSyncStatus.success:
+        statusColor = AppColors.success;
+        statusIcon = Icons.check_circle;
+        statusText = 'Synced Successfully';
+        break;
+      case DirectSyncStatus.error:
+        statusColor = Colors.red;
+        statusIcon = Icons.error;
+        statusText = provider.errorMessage ?? 'Sync Failed';
+        break;
+      default:
+        statusColor = _isAutoDirectSyncEnabled ? AppColors.success : Colors.indigo;
+        statusIcon = Icons.cloud_upload_outlined;
+        statusText = 'Sync call data directly';
+    }
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.1),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: statusColor.withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: AppColors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header section
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  statusColor.withValues(alpha: 0.03),
+                  AppColors.white,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              children: [
+                // Icon with gradient
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: _isAutoDirectSyncEnabled
+                          ? [AppColors.success, Colors.green.shade700]
+                          : [Colors.indigo.shade400, Colors.indigo.shade700],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_isAutoDirectSyncEnabled ? AppColors.success : Colors.indigo).withValues(alpha: 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    _isAutoDirectSyncEnabled ? Icons.flash_auto : Icons.flash_on_rounded,
+                    color: AppColors.white,
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Direct Sync',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isAutoDirectSyncEnabled
+                            ? 'Auto-syncs after each call'
+                            : 'Sync latest call without recording',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Auto toggle switch
+                _isAutoDirectSyncLoading
+                    ? Container(
+                        padding: const EdgeInsets.all(8),
+                        child: SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            color: statusColor,
+                            strokeWidth: 2.5,
+                          ),
+                        ),
+                      )
+                    : Transform.scale(
+                        scale: 0.9,
+                        child: Switch(
+                          value: _isAutoDirectSyncEnabled,
+                          onChanged: _toggleAutoDirectSync,
+                          activeThumbColor: AppColors.success,
+                          activeTrackColor: AppColors.success.withValues(alpha: 0.3),
+                          inactiveThumbColor: Colors.indigo.shade400,
+                          inactiveTrackColor: Colors.indigo.withValues(alpha: 0.2),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+
+          // Auto Direct Sync status when enabled
+          if (_isAutoDirectSyncEnabled) ...[
+            Container(
+              height: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    AppColors.divider.withValues(alpha: 0.5),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.success.withValues(alpha: 0.15),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.check_circle_rounded,
+                        color: AppColors.success,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Auto Direct Sync Active',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.success,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Calls will sync automatically without recording',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          // Status and button section (only show when auto is disabled)
+          if (!_isAutoDirectSyncEnabled)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                children: [
+                  // Status indicator
+                  if (directSyncStatus != DirectSyncStatus.idle)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: statusColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          if (isDirectSyncing)
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                              ),
+                            )
+                          else
+                            Icon(statusIcon, color: statusColor, size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              statusText,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          if (directSyncStatus == DirectSyncStatus.success ||
+                              directSyncStatus == DirectSyncStatus.error)
+                            GestureDetector(
+                              onTap: () => provider.resetDirectSyncStatus(),
+                              child: Icon(
+                                Icons.close,
+                                color: statusColor,
+                                size: 18,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+
+                  // Direct sync button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: isDirectSyncing
+                          ? null
+                          : () async {
+                              final success = await provider.directSyncLatestCall();
+                              if (mounted && success) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Call synced successfully!'),
+                                    backgroundColor: AppColors.success,
+                                  ),
+                                );
+                              } else if (mounted && !success) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(provider.errorMessage ?? 'Sync failed'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            },
+                      icon: isDirectSyncing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(AppColors.white),
+                              ),
+                            )
+                          : const Icon(Icons.bolt),
+                      label: Text(isDirectSyncing ? 'Syncing...' : 'Sync Latest Call'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo,
+                        foregroundColor: AppColors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Info text
+                  Text(
+                    'Syncs phone number, duration & call type from recent calls',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

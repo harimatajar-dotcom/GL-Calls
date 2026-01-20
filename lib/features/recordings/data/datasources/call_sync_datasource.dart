@@ -85,6 +85,105 @@ class CallSyncData {
     );
   }
 
+  /// Create CallSyncData from recording without recording URL
+  /// Used when file is not found but we still want to sync call metadata
+  factory CallSyncData.fromRecordingWithoutUrl(RecordingModel recording) {
+    // Generate random call_id
+    final callId = _generateRandomCallId();
+
+    // Format call_start_at as current sync time (YYYY-MM-DD HH:MM:SS)
+    final callStartAt = _formatDateTime(DateTime.now());
+
+    // Determine event type based on call type and duration
+    String eventType;
+    if (recording.callType == CallType.missed) {
+      eventType = 'missed';
+    } else {
+      eventType = recording.duration > 0 ? 'answered' : 'missed';
+    }
+
+    // Determine direction from actual call type
+    String direction;
+    switch (recording.callType) {
+      case CallType.incoming:
+        direction = 'inbound';
+        break;
+      case CallType.outgoing:
+        direction = 'outbound';
+        break;
+      case CallType.missed:
+        direction = 'inbound'; // Missed calls are typically incoming
+        break;
+      case CallType.unknown:
+        // Fallback: use inbound as default
+        direction = 'inbound';
+        break;
+    }
+
+    return CallSyncData(
+      callId: callId,
+      phoneNumber: recording.phoneNumber ?? 'unknown',
+      callStartAt: callStartAt,
+      duration: recording.duration,
+      eventType: eventType,
+      direction: direction,
+      recordingUrl: null, // No recording URL since file not found
+    );
+  }
+
+  /// Direct sync - Create CallSyncData with placeholder URL for direct API sync
+  /// Used for syncing call data directly without S3 upload
+  factory CallSyncData.forDirectSync({
+    required String phoneNumber,
+    required int duration,
+    required CallType callType,
+    DateTime? callTime,
+  }) {
+    // Generate random call_id
+    final callId = _generateRandomCallId();
+
+    // Format call_start_at
+    final callStartAt = _formatDateTime(callTime ?? DateTime.now());
+
+    // Determine event type based on call type and duration
+    String eventType;
+    if (callType == CallType.missed) {
+      eventType = 'missed';
+    } else {
+      eventType = duration > 0 ? 'answered' : 'missed';
+    }
+
+    // Determine direction from call type
+    String direction;
+    switch (callType) {
+      case CallType.incoming:
+        direction = 'inbound';
+        break;
+      case CallType.outgoing:
+        direction = 'outbound';
+        break;
+      case CallType.missed:
+        direction = 'inbound';
+        break;
+      case CallType.unknown:
+        direction = 'inbound';
+        break;
+    }
+
+    // Use placeholder URL for direct sync
+    const placeholderUrl = 'https://glcalls.s3.amazonaws.com/no-recording.wav';
+
+    return CallSyncData(
+      callId: callId,
+      phoneNumber: phoneNumber,
+      callStartAt: callStartAt,
+      duration: duration,
+      eventType: eventType,
+      direction: direction,
+      recordingUrl: placeholderUrl,
+    );
+  }
+
   /// Generate random call ID
   static String _generateRandomCallId() {
     final random = Random();

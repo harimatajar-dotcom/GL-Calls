@@ -11,6 +11,7 @@ import 'auto_sync_service.dart';
 
 class BackgroundServiceHelper {
   static const String _autoSyncEnabledKey = 'auto_sync_enabled';
+  static const String _autoDirectSyncEnabledKey = 'auto_direct_sync_enabled';
   static const String _notificationChannelId = 'gl_dialer_auto_sync';
   static const String _notificationChannelName = 'GL Dialer Auto Sync';
 
@@ -83,7 +84,33 @@ class BackgroundServiceHelper {
     if (enabled) {
       await startService();
     } else {
-      await stopService();
+      // Only stop service if auto direct sync is also disabled
+      final isDirectSyncEnabled = await isAutoDirectSyncEnabled();
+      if (!isDirectSyncEnabled) {
+        await stopService();
+      }
+    }
+  }
+
+  /// Check if auto direct sync is enabled
+  static Future<bool> isAutoDirectSyncEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoDirectSyncEnabledKey) ?? false;
+  }
+
+  /// Set auto direct sync enabled/disabled
+  static Future<void> setAutoDirectSyncEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoDirectSyncEnabledKey, enabled);
+
+    if (enabled) {
+      await startService();
+    } else {
+      // Only stop service if auto sync is also disabled
+      final isAutoSyncEnabled = await BackgroundServiceHelper.isAutoSyncEnabled();
+      if (!isAutoSyncEnabled) {
+        await stopService();
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import '../../../../core/services/auto_sync_service.dart';
 import '../../domain/entities/recording_entity.dart';
 import '../../domain/repositories/recording_repository.dart';
 
@@ -8,6 +9,8 @@ enum RecordingStatus { initial, loading, loaded, error }
 enum PlaybackState { stopped, playing, paused, loading }
 
 enum UploadStatus { idle, uploading, success, error }
+
+enum DirectSyncStatus { idle, syncing, success, error }
 
 class RecordingProvider extends ChangeNotifier {
   final RecordingRepository repository;
@@ -27,6 +30,10 @@ class RecordingProvider extends ChangeNotifier {
   UploadStatus _uploadStatus = UploadStatus.idle;
   RecordingEntity? _lastUploadedRecording;
 
+  // Direct sync state
+  DirectSyncStatus _directSyncStatus = DirectSyncStatus.idle;
+  final AutoSyncService _autoSyncService = AutoSyncService();
+
   // Playback state
   PlaybackState _playbackState = PlaybackState.stopped;
   RecordingEntity? _currentRecording;
@@ -43,6 +50,9 @@ class RecordingProvider extends ChangeNotifier {
   UploadStatus get uploadStatus => _uploadStatus;
   RecordingEntity? get lastUploadedRecording => _lastUploadedRecording;
   bool get isUploading => _uploadStatus == UploadStatus.uploading;
+
+  DirectSyncStatus get directSyncStatus => _directSyncStatus;
+  bool get isDirectSyncing => _directSyncStatus == DirectSyncStatus.syncing;
 
   PlaybackState get playbackState => _playbackState;
   RecordingEntity? get currentRecording => _currentRecording;
@@ -161,6 +171,42 @@ class RecordingProvider extends ChangeNotifier {
 
   void resetUploadStatus() {
     _uploadStatus = UploadStatus.idle;
+    notifyListeners();
+  }
+
+  /// Direct sync - Sync latest call data directly to server without S3 upload
+  Future<bool> directSyncLatestCall() async {
+    _directSyncStatus = DirectSyncStatus.syncing;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // Initialize the auto sync service
+      await _autoSyncService.initialize();
+
+      // Perform direct sync
+      final success = await _autoSyncService.directSyncFromCallLog();
+
+      if (success) {
+        _directSyncStatus = DirectSyncStatus.success;
+        notifyListeners();
+        return true;
+      } else {
+        _directSyncStatus = DirectSyncStatus.error;
+        _errorMessage = 'No recent calls found or sync failed';
+        notifyListeners();
+        return false;
+      }
+    } catch (e) {
+      _directSyncStatus = DirectSyncStatus.error;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void resetDirectSyncStatus() {
+    _directSyncStatus = DirectSyncStatus.idle;
     notifyListeners();
   }
 
