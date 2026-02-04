@@ -1,9 +1,13 @@
 import 'dart:ui';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart' show Provider;
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/services/background_service.dart';
 import '../../../../core/widgets/floating_bottom_nav_bar.dart';
+import '../../../recordings/presentation/providers/recording_provider.dart';
 import '../../../recordings/presentation/screens/recordings_screen.dart';
 import 'call_logs_screen.dart';
 import 'home_screen.dart';
@@ -26,6 +30,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'Recordings',
     'Profile',
   ];
+
+  Future<void> _selectRecordingFolder() async {
+    try {
+      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+
+      if (selectedDirectory != null) {
+        // Save the selected folder
+        await BackgroundServiceHelper.setCustomRecordingFolder(selectedDirectory);
+
+        // Refresh recordings with the new folder
+        if (mounted) {
+          final provider = Provider.of<RecordingProvider>(context, listen: false);
+          await provider.refresh();
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Recording folder set: $selectedDirectory'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to select folder: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,8 +157,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           if (_currentIndex == 2)
             IconButton(
-              icon: const Icon(Icons.refresh, color: AppColors.white),
-              onPressed: () {},
+              icon: const Icon(Icons.folder_open, color: AppColors.white),
+              onPressed: _selectRecordingFolder,
             ),
         ],
       ),

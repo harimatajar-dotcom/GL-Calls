@@ -87,10 +87,15 @@ class AutoSyncService {
       case PhoneStateStatus.CALL_ENDED:
         if (_wasInCall) {
           _logGreen('Call ended - Starting auto-sync...');
+          // Calculate duration from call start time as fallback
+          final callDuration = _callStartTime != null
+              ? DateTime.now().difference(_callStartTime!).inSeconds
+              : 0;
+          _logGreen('Calculated call duration: ${callDuration}s');
           _wasInCall = false;
-          // Wait a bit for the recording to be saved
-          Future.delayed(const Duration(seconds: 5), () {
-            _autoSyncLatestRecording();
+          // Wait longer for call log to be updated (10 seconds)
+          Future.delayed(const Duration(seconds: 10), () {
+            _autoSyncLatestRecording(fallbackDuration: callDuration);
           });
         }
         break;
@@ -98,11 +103,13 @@ class AutoSyncService {
       case PhoneStateStatus.CALL_INCOMING:
         _logBlue('Incoming call from: ${state.number}');
         _wasInCall = true;
+        _callStartTime ??= DateTime.now();
         break;
 
       case PhoneStateStatus.CALL_OUTGOING:
         _logBlue('Outgoing call to: ${state.number}');
         _wasInCall = true;
+        _callStartTime ??= DateTime.now();
         break;
 
       case PhoneStateStatus.NOTHING:
@@ -112,7 +119,7 @@ class AutoSyncService {
   }
 
   /// Auto-sync the latest recording after call ends
-  Future<void> _autoSyncLatestRecording() async {
+  Future<void> _autoSyncLatestRecording({int fallbackDuration = 0}) async {
     try {
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logGreen('🔄 AUTO-SYNC STARTED (OPTIMIZED)');
@@ -145,11 +152,11 @@ class AutoSyncService {
           if (isAutoDirectSyncEnabled) {
             // Use direct sync (no S3 upload, uses placeholder URL)
             _logGreen('Auto Direct Sync enabled - using direct sync...');
-            await directSyncFromCallLog();
+            await directSyncFromCallLog(fallbackDuration: fallbackDuration);
           } else {
             // Use dummy file upload to S3
             _logGreen('Attempting to sync from call log with dummy file...');
-            await _syncFromCallLogWithDummyFile(vendorId);
+            await _syncFromCallLogWithDummyFile(vendorId, fallbackDuration: fallbackDuration);
           }
           return;
         }
@@ -195,7 +202,7 @@ class AutoSyncService {
   }
 
   /// Sync call data from call log with dummy audio file when no recording exists
-  Future<void> _syncFromCallLogWithDummyFile(int vendorId) async {
+  Future<void> _syncFromCallLogWithDummyFile(int vendorId, {int fallbackDuration = 0}) async {
     try {
       // Get the latest call from call log (last 5 minutes)
       final now = DateTime.now();
@@ -213,9 +220,14 @@ class AutoSyncService {
 
       // Get the most recent call
       final latestCall = entries.first;
+      // Use fallback duration if call_log returns 0
+      final duration = (latestCall.duration ?? 0) > 0
+          ? latestCall.duration!
+          : fallbackDuration;
       _logGreen('Found recent call from call log:');
       _logGreen('   Number: ${latestCall.number}');
-      _logGreen('   Duration: ${latestCall.duration}s');
+      _logGreen('   Duration from call_log: ${latestCall.duration}s');
+      _logGreen('   Using duration: ${duration}s${(latestCall.duration ?? 0) == 0 ? " (fallback)" : ""}');
       _logGreen('   Type: ${latestCall.callType}');
 
       // Create dummy file
@@ -249,7 +261,7 @@ class AutoSyncService {
         localPath: dummyFilePath,
         phoneNumber: latestCall.number ?? 'unknown',
         contactName: latestCall.name,
-        duration: latestCall.duration ?? 0,
+        duration: duration,
         fileSize: 16044, // Size of silent.wav
         createdAt: DateTime.fromMillisecondsSinceEpoch(latestCall.timestamp ?? now.millisecondsSinceEpoch),
         callType: callType,
@@ -411,13 +423,93 @@ class AutoSyncService {
     }
   }
 
-  /// Direct sync - Sync call data directly to server without S3 upload
-  /// Uses placeholder URL and gets call data from call_log
-  Future<bool> directSyncFromCallLog() async {
+  /// Direct sync - Sync call data to server
+  /// First checks custom folder for recordings, if found uploads that recording
+  /// If no recording found, uses placeholder URL
+  /// Flow: 1. Check for recording in custom folder  2. Store locally  3. Upload/Sync to server
+  Future<bool> directSyncFromCallLog({int fallbackDuration = 0}) async {
     try {
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logGreen('📞 DIRECT SYNC STARTED');
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Get vendor ID from shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      final vendorId = prefs.getInt('vendor_id') ?? 0;
+
+      // Step 1: Check for recording in custom folder
+      _logGreen('Step 1: Scanning for recording in custom folder...');
+      final latestRecording = await _scannerDataSource.scanForLatestUnsyncedRecording();
+
+      if (latestRecording != null) {
+        // Found a recording in custom folder - upload it
+        _logGreen('   ✓ Found recording: ${latestRecording.fileName}');
+        _logGreen('   Phone: ${latestRecording.phoneNumber}');
+        _logGreen('   Duration: ${latestRecording.duration}s');
+
+        // Check if file exists
+        final file = File(latestRecording.filePath);
+        if (await file.exists()) {
+          _logGreen('Step 2: Uploading recording to S3...');
+
+          // Get audio duration if not set
+          var recordingWithDuration = latestRecording;
+          if (latestRecording.duration == 0) {
+            final duration = await _scannerDataSource.getAudioDuration(latestRecording.filePath);
+            recordingWithDuration = latestRecording.copyWith(duration: duration > 0 ? duration : fallbackDuration);
+            _logGreen('   Duration: ${recordingWithDuration.duration}s');
+          }
+
+          // Save to local database first
+          await _databaseDataSource.insertRecording(recordingWithDuration);
+          _logGreen('   ✓ Stored locally');
+
+          if (vendorId > 0) {
+            // Upload to S3
+            final uploadedRecording = await _uploadDataSource.uploadRecording(
+              recording: recordingWithDuration,
+              vendorId: vendorId,
+            );
+
+            if (uploadedRecording != null) {
+              _logGreen('   ✓ Uploaded to S3: ${uploadedRecording.uploadUrl}');
+
+              // Update database with upload status
+              final savedRecord = await _databaseDataSource.getLatestRecording();
+              if (savedRecord?.id != null) {
+                await _databaseDataSource.updateUploadStatus(
+                  savedRecord!.id!,
+                  uploadedRecording.uploadUrl ?? '',
+                  uploadedRecording.s3Path ?? '',
+                );
+              }
+
+              // Sync to server with actual recording URL
+              _logGreen('Step 3: Syncing to server...');
+              final callSyncData = CallSyncData.fromRecording(uploadedRecording.copyWith(
+                phoneNumber: recordingWithDuration.phoneNumber,
+                duration: recordingWithDuration.duration,
+                callType: recordingWithDuration.callType,
+              ));
+              final success = await _callSyncDataSource.syncCall(callSyncData);
+
+              if (success) {
+                _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                _logGreen('✅ DIRECT SYNC COMPLETED (WITH RECORDING)');
+                _logGreen('   Recording: ${latestRecording.fileName}');
+                _logGreen('   Phone: ${recordingWithDuration.phoneNumber}');
+                _logGreen('   Duration: ${recordingWithDuration.duration}s');
+                _logGreen('   URL: ${uploadedRecording.uploadUrl}');
+                _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      // No recording found or upload failed - fall back to call log data with placeholder URL
+      _logGreen('No recording found, using call log data with placeholder URL...');
 
       // Get the latest call from call log (last 10 minutes)
       final now = DateTime.now();
@@ -435,9 +527,14 @@ class AutoSyncService {
 
       // Get the most recent call
       final latestCall = entries.first;
+      // Use fallback duration if call_log returns 0
+      final duration = (latestCall.duration ?? 0) > 0
+          ? latestCall.duration!
+          : fallbackDuration;
       _logGreen('Found recent call:');
       _logGreen('   Number: ${latestCall.number}');
-      _logGreen('   Duration: ${latestCall.duration}s');
+      _logGreen('   Duration from call_log: ${latestCall.duration}s');
+      _logGreen('   Using duration: ${duration}s${(latestCall.duration ?? 0) == 0 ? " (fallback)" : ""}');
       _logGreen('   Type: ${latestCall.callType}');
 
       // Convert call_log.CallType to local CallType
@@ -456,32 +553,70 @@ class AutoSyncService {
           callType = CallType.incoming;
       }
 
-      // Create CallSyncData for direct sync (with placeholder URL)
-      final callSyncData = CallSyncData.forDirectSync(
+      // Placeholder URL for direct sync
+      const placeholderUrl = 'https://glcalls.s3.amazonaws.com/no-recording.wav';
+
+      // Store call data locally
+      _logGreen('Storing call data locally...');
+      final recording = RecordingModel(
+        id: null,
+        fileName: 'direct_sync_${DateTime.now().millisecondsSinceEpoch}.wav',
+        filePath: 'direct_sync', // No actual file for direct sync
+        localPath: 'direct_sync',
         phoneNumber: latestCall.number ?? 'unknown',
-        duration: latestCall.duration ?? 0,
+        contactName: latestCall.name,
+        duration: duration,
+        fileSize: 0, // No file for direct sync
+        createdAt: DateTime.fromMillisecondsSinceEpoch(latestCall.timestamp ?? now.millisecondsSinceEpoch),
         callType: callType,
-        callTime: latestCall.timestamp != null
-            ? DateTime.fromMillisecondsSinceEpoch(latestCall.timestamp!)
-            : now,
+        isUploaded: false,
       );
 
-      _logGreen('Syncing to server...');
+      // Save to local database
+      await _databaseDataSource.insertRecording(recording);
+      _logGreen('   ✓ Stored locally: ${recording.phoneNumber}');
+
+      // Read from local database
+      final savedRecord = await _databaseDataSource.getLatestRecording();
+
+      if (savedRecord == null) {
+        _logRed('Failed to read saved record from database');
+        return false;
+      }
+
+      // Create CallSyncData from locally saved data with placeholder URL
+      _logGreen('Syncing to server with placeholder URL...');
+      final callSyncData = CallSyncData.forDirectSync(
+        phoneNumber: savedRecord.phoneNumber ?? 'unknown',
+        duration: savedRecord.duration,
+        callType: savedRecord.callType,
+        callTime: savedRecord.createdAt,
+      );
+
       _logGreen('   Phone: ${callSyncData.phoneNumber}');
       _logGreen('   Duration: ${callSyncData.duration}s');
       _logGreen('   Direction: ${callSyncData.direction}');
       _logGreen('   Recording URL: ${callSyncData.recordingUrl}');
 
-      // Sync directly to server
+      // Sync to server
       final success = await _callSyncDataSource.syncCall(callSyncData);
 
       if (success) {
+        // Update local record as synced
+        await _databaseDataSource.updateUploadStatus(
+          savedRecord.id!,
+          placeholderUrl,
+          'direct_sync',
+        );
+
         _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        _logGreen('✅ DIRECT SYNC COMPLETED');
+        _logGreen('✅ DIRECT SYNC COMPLETED (PLACEHOLDER URL)');
+        _logGreen('   Phone: ${savedRecord.phoneNumber}');
+        _logGreen('   Duration: ${savedRecord.duration}s');
         _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         return true;
       } else {
-        _logRed('Direct sync failed');
+        _logRed('Direct sync failed - call stored locally but not synced');
         return false;
       }
     } catch (e) {

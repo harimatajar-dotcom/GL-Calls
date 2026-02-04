@@ -3,6 +3,7 @@ import 'package:call_log/call_log.dart' as call_log;
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../domain/entities/recording_entity.dart';
 import '../models/recording_model.dart';
 
@@ -48,6 +49,24 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     '.ogg',
   ];
 
+  // Key for custom recording folder in SharedPreferences
+  static const String _customRecordingFolderKey = 'custom_recording_folder';
+
+  /// Get recording paths including custom folder if set
+  Future<List<String>> _getRecordingPaths() async {
+    final prefs = await SharedPreferences.getInstance();
+    final customFolder = prefs.getString(_customRecordingFolderKey);
+
+    if (customFolder != null && customFolder.isNotEmpty) {
+      // If custom folder is set, use it as the primary (and only) path
+      _logCyan('📁 Using custom recording folder: $customFolder');
+      return [customFolder];
+    }
+
+    // Otherwise use default paths
+    return _recordingPaths;
+  }
+
   @override
   Future<List<RecordingModel>> scanForRecordings() async {
     final recordings = <RecordingModel>[];
@@ -55,7 +74,10 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     // Load call logs for matching
     await _loadCallLogs();
 
-    for (final basePath in _recordingPaths) {
+    // Get recording paths (custom folder or default paths)
+    final paths = await _getRecordingPaths();
+
+    for (final basePath in paths) {
       final directory = Directory(basePath);
       if (await directory.exists()) {
         try {
@@ -130,7 +152,10 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     // Load call logs only for the last 1 hour
     await _loadCallLogsOptimized();
 
-    for (final basePath in _recordingPaths) {
+    // Get recording paths (custom folder or default paths)
+    final paths = await _getRecordingPaths();
+
+    for (final basePath in paths) {
       final directory = Directory(basePath);
       if (await directory.exists()) {
         try {

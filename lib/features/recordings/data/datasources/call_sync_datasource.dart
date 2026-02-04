@@ -47,12 +47,15 @@ class CallSyncData {
     // Format call_start_at as current sync time (YYYY-MM-DD HH:MM:SS)
     final callStartAt = _formatDateTime(DateTime.now());
 
-    // Determine event type based on call type and duration
+    // For non-missed calls, ensure minimum duration of 2s
+    final effectiveDuration = (recording.callType != CallType.missed && recording.duration == 0) ? 2 : recording.duration;
+
+    // Determine event type based on call type
     String eventType;
     if (recording.callType == CallType.missed) {
       eventType = 'missed';
     } else {
-      eventType = recording.duration > 0 ? 'answered' : 'missed';
+      eventType = 'answered';
     }
 
     // Determine direction from actual call type
@@ -77,7 +80,7 @@ class CallSyncData {
       callId: callId,
       phoneNumber: recording.phoneNumber ?? 'unknown',
       callStartAt: callStartAt,
-      duration: recording.duration,
+      duration: effectiveDuration,
       eventType: eventType,
       direction: direction,
       // Use full CloudFront URL (S3 URL)
@@ -94,12 +97,15 @@ class CallSyncData {
     // Format call_start_at as current sync time (YYYY-MM-DD HH:MM:SS)
     final callStartAt = _formatDateTime(DateTime.now());
 
-    // Determine event type based on call type and duration
+    // For non-missed calls, ensure minimum duration of 2s
+    final effectiveDuration = (recording.callType != CallType.missed && recording.duration == 0) ? 2 : recording.duration;
+
+    // Determine event type based on call type
     String eventType;
     if (recording.callType == CallType.missed) {
       eventType = 'missed';
     } else {
-      eventType = recording.duration > 0 ? 'answered' : 'missed';
+      eventType = 'answered';
     }
 
     // Determine direction from actual call type
@@ -124,7 +130,7 @@ class CallSyncData {
       callId: callId,
       phoneNumber: recording.phoneNumber ?? 'unknown',
       callStartAt: callStartAt,
-      duration: recording.duration,
+      duration: effectiveDuration,
       eventType: eventType,
       direction: direction,
       recordingUrl: null, // No recording URL since file not found
@@ -145,12 +151,16 @@ class CallSyncData {
     // Format call_start_at
     final callStartAt = _formatDateTime(callTime ?? DateTime.now());
 
+    // For non-missed calls, ensure minimum duration of 2s so eventType is 'answered'
+    // Some phones don't provide call duration, but the call was still answered
+    final effectiveDuration = (callType != CallType.missed && duration == 0) ? 2 : duration;
+
     // Determine event type based on call type and duration
     String eventType;
     if (callType == CallType.missed) {
       eventType = 'missed';
     } else {
-      eventType = duration > 0 ? 'answered' : 'missed';
+      eventType = 'answered';
     }
 
     // Determine direction from call type
@@ -177,7 +187,7 @@ class CallSyncData {
       callId: callId,
       phoneNumber: phoneNumber,
       callStartAt: callStartAt,
-      duration: duration,
+      duration: effectiveDuration,
       eventType: eventType,
       direction: direction,
       recordingUrl: placeholderUrl,

@@ -12,6 +12,7 @@ import 'auto_sync_service.dart';
 class BackgroundServiceHelper {
   static const String _autoSyncEnabledKey = 'auto_sync_enabled';
   static const String _autoDirectSyncEnabledKey = 'auto_direct_sync_enabled';
+  static const String _customRecordingFolderKey = 'custom_recording_folder';
   static const String _notificationChannelId = 'gl_dialer_auto_sync';
   static const String _notificationChannelName = 'GL Dialer Auto Sync';
 
@@ -111,6 +112,22 @@ class BackgroundServiceHelper {
       if (!isAutoSyncEnabled) {
         await stopService();
       }
+    }
+  }
+
+  /// Get custom recording folder path
+  static Future<String?> getCustomRecordingFolder() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_customRecordingFolderKey);
+  }
+
+  /// Set custom recording folder path
+  static Future<void> setCustomRecordingFolder(String? folderPath) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (folderPath != null) {
+      await prefs.setString(_customRecordingFolderKey, folderPath);
+    } else {
+      await prefs.remove(_customRecordingFolderKey);
     }
   }
 

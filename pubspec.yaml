@@ -61,6 +61,7 @@ dependencies:
 
   # File Access
   path_provider: ^2.1.2
+  file_picker: ^8.0.0+1
 
   # URL Launcher (for making calls and sending SMS)
   url_launcher: ^6.2.5
