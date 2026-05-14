@@ -29,6 +29,17 @@ class AuthLocalDataSourceImpl implements AuthLocalDataSource {
       // Also save with alternate keys for background service
       await sharedPreferences.setString(authTokenKeyAlt, user.token);
       await sharedPreferences.setInt(vendorIdKey, user.vendorId);
+      // business_id is set later by AuthProvider after calling
+      // GET /api/mobile/businesses (different ULID from user.id).
+      // Only save it here if the login response actually included it.
+      if (user.businessId != null && user.businessId!.isNotEmpty) {
+        await sharedPreferences.setString('business_id', user.businessId!);
+      }
+      if (user.userId != null && user.userId!.isNotEmpty) {
+        await sharedPreferences.setString('user_id', user.userId!);
+      }
+      await sharedPreferences.setString('user_name', user.name);
+      await sharedPreferences.setString('user_email', user.email);
     } catch (e) {
       throw const CacheException(message: 'Failed to cache user data');
     }

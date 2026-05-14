@@ -15,6 +15,8 @@ import '../../features/recordings/data/datasources/recording_upload_datasource.d
 import '../../features/recordings/data/models/recording_model.dart';
 import '../../features/recordings/domain/entities/recording_entity.dart';
 import '../network/api_client.dart';
+import 'log_service.dart';
+import 'synced_call_ledger.dart';
 
 class AutoSyncService {
   StreamSubscription<PhoneState>? _phoneStateSubscription;
@@ -118,6 +120,78 @@ class AutoSyncService {
     }
   }
 
+  /// Read the user's selected dial code (e.g. "+91") from SharedPreferences.
+  /// Falls back to "+91" if nothing was stored (legacy sessions pre-update).
+  Future<String?> _readCountryCode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final code = prefs.getString('country_code');
+      if (code != null && code.isNotEmpty) return code;
+      return '+91';
+    } catch (_) {
+      return '+91';
+    }
+  }
+
+  /// Sync a CallSyncData payload exactly once across the lifetime of this
+  /// install. The `call_id` is deterministic (same physical call → same
+  /// id from any sync path), and [SyncedCallLedger.tryAcquire] takes a
+  /// cross-isolate lease before the POST so the background isolate
+  /// (WorkManager / FlutterBackgroundService) cannot race past us
+  /// between the dedupe check and the network call.
+  Future<bool> _syncIfNew(CallSyncData data) async {
+    final acquired = await SyncedCallLedger.tryAcquire(data.callId);
+    if (!acquired) {
+      _logBlue('⏭️  Skipping duplicate sync — call_id ${data.callId} already synced or in-flight');
+      return true;
+    }
+    try {
+      final ok = await _callSyncDataSource.syncCall(data);
+      if (ok) {
+        await SyncedCallLedger.commit(data.callId);
+      } else {
+        await SyncedCallLedger.release(data.callId);
+      }
+      return ok;
+    } catch (e) {
+      await SyncedCallLedger.release(data.callId);
+      rethrow;
+    }
+  }
+
+  /// Reload auth token from SharedPreferences (call before each sync)
+  /// IMPORTANT: Background isolate has its own cached SharedPreferences view.
+  /// Must call reload() to see updates made by the main isolate (login).
+  Future<bool> _refreshAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Force reload from native storage so background isolate sees latest token
+      await prefs.reload();
+
+      // Try both keys for backwards compatibility
+      String token = prefs.getString('auth_token') ?? '';
+      if (token.isEmpty) {
+        token = prefs.getString('AUTH_TOKEN') ?? '';
+      }
+
+      _logBlue('All keys in prefs: ${prefs.getKeys().toList()}');
+
+      if (token.isEmpty) {
+        _logRed('No auth token found - User needs to login');
+        _logRed('Checked keys: auth_token, AUTH_TOKEN');
+        return false;
+      }
+
+      _apiClient.setAuthToken(token);
+      _logGreen('Auth token refreshed (length: ${token.length}, prefix: ${token.substring(0, 10)}...)');
+      return true;
+    } catch (e) {
+      _logRed('Failed to refresh auth token: $e');
+      return false;
+    }
+  }
+
   /// Auto-sync the latest recording after call ends
   Future<void> _autoSyncLatestRecording({int fallbackDuration = 0}) async {
     try {
@@ -125,14 +199,17 @@ class AutoSyncService {
       _logGreen('🔄 AUTO-SYNC STARTED (OPTIMIZED)');
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // Get vendor ID from shared preferences
-      final prefs = await SharedPreferences.getInstance();
-      final vendorId = prefs.getInt('vendor_id') ?? 0;
-
-      if (vendorId == 0) {
-        _logRed('No vendor ID found - User may not be logged in');
+      // Refresh auth token before sync
+      final hasToken = await _refreshAuthToken();
+      if (!hasToken) {
+        _logRed('Aborting sync - no valid auth token');
         return;
       }
+
+      // Get vendor ID from shared preferences (optional - new API doesn't provide it)
+      final prefs = await SharedPreferences.getInstance();
+      final vendorId = prefs.getInt('vendor_id') ?? 0;
+      _logBlue('Vendor ID: $vendorId (0 = not set, using fallback)');
 
       // Use optimized scan - only checks last 1 hour
       _logGreen('Scanning for latest recording (optimized - last 1 hour)...');
@@ -228,7 +305,8 @@ class AutoSyncService {
       _logGreen('   Number: ${latestCall.number}');
       _logGreen('   Duration from call_log: ${latestCall.duration}s');
       _logGreen('   Using duration: ${duration}s${(latestCall.duration ?? 0) == 0 ? " (fallback)" : ""}');
-      _logGreen('   Type: ${latestCall.callType}');
+      _logGreen('   Type from call_log: ${latestCall.callType}');
+      _logGreen('   Type name: ${latestCall.callType?.name ?? "null"}');
 
       // Create dummy file
       final dummyFilePath = await _createDummyAudioFile();
@@ -242,15 +320,23 @@ class AutoSyncService {
       switch (latestCall.callType) {
         case call_log.CallType.incoming:
           callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (incoming call)');
           break;
         case call_log.CallType.outgoing:
           callType = CallType.outgoing;
+          _logGreen('   ➡️ Direction: OUTBOUND (outgoing call)');
           break;
         case call_log.CallType.missed:
           callType = CallType.missed;
+          _logGreen('   ➡️ Direction: INBOUND (missed call)');
+          break;
+        case call_log.CallType.wifiOutgoing:
+          callType = CallType.outgoing;
+          _logGreen('   ➡️ Direction: OUTBOUND (wifi outgoing)');
           break;
         default:
           callType = CallType.incoming;
+          _logGreen('   ⚠️ Direction: INBOUND (default for ${latestCall.callType})');
       }
 
       // Create a RecordingModel from call log data
@@ -295,8 +381,9 @@ class AutoSyncService {
         duration: recording.duration,
         callType: recording.callType,
       );
-      final callSyncData = CallSyncData.fromRecording(syncRecording);
-      await _callSyncDataSource.syncCall(callSyncData);
+      final countryCode = await _readCountryCode();
+      final callSyncData = CallSyncData.fromRecording(syncRecording, countryCode: countryCode);
+      await _syncIfNew(callSyncData);
 
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logGreen('✅ AUTO-SYNC COMPLETED (FROM CALL LOG)');
@@ -324,8 +411,9 @@ class AutoSyncService {
       if (dummyFilePath == null) {
         _logRed('Failed to create dummy audio file');
         // Fallback: sync without recording
-        final callSyncData = CallSyncData.fromRecordingWithoutUrl(recording);
-        await _callSyncDataSource.syncCall(callSyncData);
+        final countryCode = await _readCountryCode();
+        final callSyncData = CallSyncData.fromRecordingWithoutUrl(recording, countryCode: countryCode);
+        await _syncIfNew(callSyncData);
         return;
       }
 
@@ -385,15 +473,23 @@ class AutoSyncService {
 
     // Sync call to server - use original recording data but with the uploaded URL
     _logGreen('Syncing call to server...');
-    final syncRecording = usedDummyFile
-        ? uploadedRecording.copyWith(
-            phoneNumber: recording.phoneNumber,
-            duration: recording.duration > 0 ? recording.duration : 1,
-            callType: recording.callType,
-          )
-        : uploadedRecording;
-    final callSyncData = CallSyncData.fromRecording(syncRecording);
-    await _callSyncDataSource.syncCall(callSyncData);
+
+    // IMPORTANT: ALWAYS get call type from call log to ensure correct direction
+    _logGreen('Fetching call type from call log...');
+    _logGreen('   Phone number: ${recording.phoneNumber}');
+    _logGreen('   Scanner call type was: ${recording.callType}');
+    final CallType finalCallType = await _getCallTypeFromCallLog(recording.phoneNumber);
+    _logGreen('   Call type from call log: $finalCallType');
+    _logGreen('   ➡️ DIRECTION: ${finalCallType == CallType.outgoing ? "OUTBOUND" : "INBOUND"}');
+
+    final syncRecording = uploadedRecording.copyWith(
+      phoneNumber: recording.phoneNumber,
+      duration: recording.duration > 0 ? recording.duration : 1,
+      callType: finalCallType,
+    );
+    final countryCode = await _readCountryCode();
+    final callSyncData = CallSyncData.fromRecording(syncRecording, countryCode: countryCode);
+    await _syncIfNew(callSyncData);
 
     _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     _logGreen('✅ AUTO-SYNC COMPLETED SUCCESSFULLY');
@@ -432,6 +528,13 @@ class AutoSyncService {
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logGreen('📞 DIRECT SYNC STARTED');
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Refresh auth token before sync
+      final hasToken = await _refreshAuthToken();
+      if (!hasToken) {
+        _logRed('Aborting direct sync - no valid auth token');
+        return false;
+      }
 
       // Get vendor ID from shared preferences
       final prefs = await SharedPreferences.getInstance();
@@ -486,12 +589,20 @@ class AutoSyncService {
 
               // Sync to server with actual recording URL
               _logGreen('Step 3: Syncing to server...');
-              final callSyncData = CallSyncData.fromRecording(uploadedRecording.copyWith(
-                phoneNumber: recordingWithDuration.phoneNumber,
-                duration: recordingWithDuration.duration,
-                callType: recordingWithDuration.callType,
-              ));
-              final success = await _callSyncDataSource.syncCall(callSyncData);
+              // ALWAYS get call type from call log
+              final callTypeFromLog = await _getCallTypeFromCallLog(recordingWithDuration.phoneNumber);
+              _logGreen('   Call type from call log: $callTypeFromLog');
+              _logGreen('   ➡️ DIRECTION: ${callTypeFromLog == CallType.outgoing ? "OUTBOUND" : "INBOUND"}');
+              final countryCode = await _readCountryCode();
+              final callSyncData = CallSyncData.fromRecording(
+                uploadedRecording.copyWith(
+                  phoneNumber: recordingWithDuration.phoneNumber,
+                  duration: recordingWithDuration.duration,
+                  callType: callTypeFromLog,
+                ),
+                countryCode: countryCode,
+              );
+              final success = await _syncIfNew(callSyncData);
 
               if (success) {
                 _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -535,22 +646,51 @@ class AutoSyncService {
       _logGreen('   Number: ${latestCall.number}');
       _logGreen('   Duration from call_log: ${latestCall.duration}s');
       _logGreen('   Using duration: ${duration}s${(latestCall.duration ?? 0) == 0 ? " (fallback)" : ""}');
-      _logGreen('   Type: ${latestCall.callType}');
+      _logGreen('   Type from call_log: ${latestCall.callType}');
+      _logGreen('   Type name: ${latestCall.callType?.name ?? "null"}');
 
       // Convert call_log.CallType to local CallType
       CallType callType;
       switch (latestCall.callType) {
         case call_log.CallType.incoming:
           callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (incoming call)');
           break;
         case call_log.CallType.outgoing:
           callType = CallType.outgoing;
+          _logGreen('   ➡️ Direction: OUTBOUND (outgoing call)');
           break;
         case call_log.CallType.missed:
           callType = CallType.missed;
+          _logGreen('   ➡️ Direction: INBOUND (missed call)');
+          break;
+        case call_log.CallType.rejected:
+          callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (rejected call)');
+          break;
+        case call_log.CallType.blocked:
+          callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (blocked call)');
+          break;
+        case call_log.CallType.answeredExternally:
+          callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (answered externally)');
+          break;
+        case call_log.CallType.voiceMail:
+          callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (voicemail)');
+          break;
+        case call_log.CallType.wifiIncoming:
+          callType = CallType.incoming;
+          _logGreen('   ➡️ Direction: INBOUND (wifi incoming)');
+          break;
+        case call_log.CallType.wifiOutgoing:
+          callType = CallType.outgoing;
+          _logGreen('   ➡️ Direction: OUTBOUND (wifi outgoing)');
           break;
         default:
-          callType = CallType.incoming;
+          callType = CallType.unknown;
+          _logGreen('   ⚠️ Direction: UNKNOWN (defaulting to unknown)');
       }
 
       // Placeholder URL for direct sync
@@ -586,11 +726,13 @@ class AutoSyncService {
 
       // Create CallSyncData from locally saved data with placeholder URL
       _logGreen('Syncing to server with placeholder URL...');
+      final countryCode = await _readCountryCode();
       final callSyncData = CallSyncData.forDirectSync(
         phoneNumber: savedRecord.phoneNumber ?? 'unknown',
         duration: savedRecord.duration,
         callType: savedRecord.callType,
         callTime: savedRecord.createdAt,
+        countryCode: countryCode,
       );
 
       _logGreen('   Phone: ${callSyncData.phoneNumber}');
@@ -599,7 +741,7 @@ class AutoSyncService {
       _logGreen('   Recording URL: ${callSyncData.recordingUrl}');
 
       // Sync to server
-      final success = await _callSyncDataSource.syncCall(callSyncData);
+      final success = await _syncIfNew(callSyncData);
 
       if (success) {
         // Update local record as synced
@@ -625,15 +767,95 @@ class AutoSyncService {
     }
   }
 
+  /// Get call type from call log by matching phone number (last 10 minutes)
+  Future<CallType> _getCallTypeFromCallLog(String? phoneNumber) async {
+    try {
+      final now = DateTime.now();
+      final tenMinutesAgo = now.subtract(const Duration(minutes: 10));
+
+      final entries = await call_log.CallLog.query(
+        dateFrom: tenMinutesAgo.millisecondsSinceEpoch,
+        dateTo: now.millisecondsSinceEpoch,
+      );
+
+      _logGreen('━━━ CALL LOG LOOKUP ━━━');
+      _logGreen('   Looking for phone: $phoneNumber');
+      _logGreen('   Found ${entries.length} recent calls');
+
+      if (entries.isEmpty) {
+        _logBlue('No recent calls in call log');
+        return CallType.unknown;
+      }
+
+      // Log all recent calls for debugging
+      int i = 0;
+      for (final entry in entries) {
+        i++;
+        _logBlue('   Call #$i: ${entry.number} | Type: ${entry.callType} | Name: ${entry.callType?.name}');
+        if (i >= 5) break; // Only log first 5
+      }
+
+      // Find matching call by phone number
+      for (final entry in entries) {
+        if (phoneNumber != null && entry.number != null) {
+          // Match last 10 digits
+          final entryDigits = entry.number!.replaceAll(RegExp(r'\D'), '');
+          final phoneDigits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+
+          final entryLast10 = entryDigits.length >= 10
+              ? entryDigits.substring(entryDigits.length - 10)
+              : entryDigits;
+          final phoneLast10 = phoneDigits.length >= 10
+              ? phoneDigits.substring(phoneDigits.length - 10)
+              : phoneDigits;
+
+          _logBlue('   Comparing: $entryLast10 vs $phoneLast10');
+
+          if (entryLast10 == phoneLast10) {
+            _logGreen('   ✓ MATCHED! Call type: ${entry.callType} (${entry.callType?.name})');
+            return _convertCallLogType(entry.callType);
+          }
+        }
+      }
+
+      // If no match by number, use the most recent call
+      final latestCall = entries.first;
+      _logGreen('   No match found, using most recent: ${latestCall.callType} (${latestCall.callType?.name})');
+      return _convertCallLogType(latestCall.callType);
+    } catch (e) {
+      _logRed('Error getting call type from log: $e');
+      return CallType.unknown;
+    }
+  }
+
+  /// Convert call_log.CallType to local CallType
+  CallType _convertCallLogType(call_log.CallType? type) {
+    switch (type) {
+      case call_log.CallType.incoming:
+        return CallType.incoming;
+      case call_log.CallType.outgoing:
+        return CallType.outgoing;
+      case call_log.CallType.missed:
+        return CallType.missed;
+      case call_log.CallType.wifiOutgoing:
+        return CallType.outgoing;
+      default:
+        return CallType.incoming;
+    }
+  }
+
   void _logGreen(String message) {
     debugPrint('\x1B[32m[AutoSync] $message\x1B[0m');
+    LogService.success(message, tag: 'AutoSync');
   }
 
   void _logBlue(String message) {
     debugPrint('\x1B[34m[AutoSync] $message\x1B[0m');
+    LogService.info(message, tag: 'AutoSync');
   }
 
   void _logRed(String message) {
     debugPrint('\x1B[31m[AutoSync] $message\x1B[0m');
+    LogService.error(message, tag: 'AutoSync');
   }
 }

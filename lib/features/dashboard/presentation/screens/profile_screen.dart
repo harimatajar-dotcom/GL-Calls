@@ -4,6 +4,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import 'logs_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -159,6 +160,18 @@ class ProfileScreen extends StatelessWidget {
                   title: 'Privacy & Security',
                   subtitle: 'Manage your data',
                   onTap: () {},
+                ),
+                const Divider(height: 1),
+                _buildSettingItem(
+                  icon: Icons.article_outlined,
+                  title: 'Logs',
+                  subtitle: 'View app logs & export as PDF',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LogsScreen()),
+                    );
+                  },
                 ),
               ],
             ),

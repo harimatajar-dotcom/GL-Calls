@@ -1,5 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/network/api_client.dart';
 import '../models/recording_model.dart';
 
@@ -9,6 +13,8 @@ class PresignedUrlResponse {
   final String fileUrl;
   final String filePath;
   final int expiresIn;
+  final String method; // POST or PUT
+  final Map<String, dynamic> formFields; // AWS signature fields for multipart POST
 
   PresignedUrlResponse({
     required this.success,
@@ -16,15 +22,37 @@ class PresignedUrlResponse {
     required this.fileUrl,
     required this.filePath,
     required this.expiresIn,
+    this.method = 'POST',
+    this.formFields = const {},
   });
 
   factory PresignedUrlResponse.fromJson(Map<String, dynamic> json) {
+    // v3 API response: {upload_url, file_path, form_fields, expires_at, method}
+    final uploadUrl = (json['upload_url'] ?? '').toString();
+    final method = (json['method'] ?? 'POST').toString().toUpperCase();
+    String fileUrl = (json['file_url'] ?? '').toString();
+
+    // Derive file URL from upload URL
+    if (fileUrl.isEmpty && uploadUrl.isNotEmpty) {
+      final qIndex = uploadUrl.indexOf('?');
+      fileUrl = qIndex > 0 ? uploadUrl.substring(0, qIndex) : uploadUrl;
+    }
+
+    final formFields = <String, dynamic>{};
+    if (json['form_fields'] is Map) {
+      (json['form_fields'] as Map).forEach((k, v) {
+        formFields[k.toString()] = v;
+      });
+    }
+
     return PresignedUrlResponse(
       success: json['success'] as bool? ?? true,
-      uploadUrl: json['upload_url'] as String,
-      fileUrl: json['file_url'] as String,
-      filePath: json['file_path'] as String,
-      expiresIn: json['expires_in'] as int? ?? 300,
+      uploadUrl: uploadUrl,
+      fileUrl: fileUrl,
+      filePath: (json['file_path'] ?? '').toString(),
+      expiresIn: json['expires_in'] is int ? json['expires_in'] as int : 300,
+      method: method,
+      formFields: formFields,
     );
   }
 }
@@ -34,10 +62,11 @@ abstract class RecordingUploadDataSource {
     required int vendorId,
     required String fileName,
     required String mimeType,
+    int fileSize,
   });
 
   Future<bool> uploadToS3({
-    required String uploadUrl,
+    required PresignedUrlResponse presigned,
     required String filePath,
     required String mimeType,
   });
@@ -83,6 +112,7 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
     required int vendorId,
     required String fileName,
     required String mimeType,
+    int fileSize = 0,
   }) async {
     try {
       // Sanitize fileName: replace spaces with underscores and remove + character
@@ -90,14 +120,59 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
           .replaceAll('+', '')
           .replaceAll(' ', '_');
 
+      // Get businessId (user.id from login) from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      String businessId = prefs.getString('business_id') ?? '';
+
+      // Fallback: try to extract user.id from cached user JSON
+      if (businessId.isEmpty) {
+        final cachedUserJson = prefs.getString('CACHED_USER') ?? '';
+        debugPrint('\x1B[33m[Upload] business_id missing, checking cached user...\x1B[0m');
+        debugPrint('\x1B[33m[Upload] Cached user: $cachedUserJson\x1B[0m');
+        if (cachedUserJson.isNotEmpty) {
+          try {
+            final userMap = jsonDecode(cachedUserJson) as Map<String, dynamic>;
+            final userId = userMap['user_id'] ?? userMap['id'] ?? userMap['business_id'];
+            if (userId != null && userId.toString().isNotEmpty) {
+              businessId = userId.toString();
+              await prefs.setString('business_id', businessId);
+              debugPrint('\x1B[33m[Upload] Recovered business_id: $businessId\x1B[0m');
+            }
+          } catch (e) {
+            debugPrint('\x1B[31m[Upload] Failed to parse cached user: $e\x1B[0m');
+          }
+        }
+      }
+
+      if (businessId.isEmpty) {
+        throw Exception('No business_id found - please logout and login again');
+      }
+
+      final requestBody = {
+        'resource_type': 'voice_recordings',
+        'file_name': sanitizedFileName,
+        'mime_type': mimeType,
+        'file_size': fileSize,
+      };
+
+      final endpoint = ApiConstants.presignedUrlForBusiness(businessId);
+
+      // Print API call in green
+      debugPrint('\x1B[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1B[0m');
+      debugPrint('\x1B[32m[API] 🚀 PRESIGNED URL REQUEST\x1B[0m');
+      debugPrint('\x1B[32m[API] URL: ${ApiConstants.baseUrl}$endpoint\x1B[0m');
+      debugPrint('\x1B[32m[API] Method: POST\x1B[0m');
+      debugPrint('\x1B[32m[API] Business ID: $businessId\x1B[0m');
+      debugPrint('\x1B[32m[API] Auth: Bearer ${apiClient.authToken?.substring(0, 20) ?? "NONE"}...\x1B[0m');
+      debugPrint('\x1B[32m[API] Body: $requestBody\x1B[0m');
+      debugPrint('\x1B[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1B[0m');
+
       final response = await apiClient.dio.post(
-        '/gl-dialer/voice/presigned-url',
-        data: {
-          'vendor_id': vendorId,
-          'file_name': sanitizedFileName,
-          'mime_type': mimeType,
-        },
+        endpoint,
+        data: requestBody,
       );
+
+      debugPrint('\x1B[32m[API] ✅ Response: ${response.statusCode} - ${response.data}\x1B[0m');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return PresignedUrlResponse.fromJson(response.data);
@@ -105,13 +180,20 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
         throw Exception('Failed to get presigned URL: ${response.statusCode}');
       }
     } on DioException catch (e) {
+      debugPrint('\x1B[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1B[0m');
+      debugPrint('\x1B[32m[API] ❌ PRESIGNED URL ERROR\x1B[0m');
+      debugPrint('\x1B[32m[API] URL: ${e.requestOptions.uri}\x1B[0m');
+      debugPrint('\x1B[32m[API] Status: ${e.response?.statusCode}\x1B[0m');
+      debugPrint('\x1B[32m[API] Response: ${e.response?.data}\x1B[0m');
+      debugPrint('\x1B[32m[API] Message: ${e.message}\x1B[0m');
+      debugPrint('\x1B[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1B[0m');
       throw Exception('Network error getting presigned URL: ${e.message}');
     }
   }
 
   @override
   Future<bool> uploadToS3({
-    required String uploadUrl,
+    required PresignedUrlResponse presigned,
     required String filePath,
     required String mimeType,
   }) async {
@@ -121,40 +203,84 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
         throw Exception('File not found: $filePath');
       }
 
-      final fileBytes = await file.readAsBytes();
-      final fileSize = fileBytes.length;
-
+      final fileSize = await file.length();
       _logBlue('📦 File size: ${(fileSize / 1024).toStringAsFixed(1)} KB');
+      _logBlue('📦 Method: ${presigned.method}');
+      _logBlue('📦 Upload URL: ${presigned.uploadUrl}');
 
-      // Use a separate Dio instance for S3 upload with timeout
+      // Use a separate Dio instance for S3 upload (no interceptors = no auth header)
       final s3Dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 120),
-        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 300),
+        receiveTimeout: const Duration(seconds: 60),
       ));
 
       int lastProgress = 0;
-      final response = await s3Dio.put(
-        uploadUrl,
-        data: Stream.fromIterable([fileBytes]),
-        options: Options(
-          headers: {
-            'Content-Type': mimeType,
-            'Content-Length': fileSize,
-          },
-          contentType: mimeType,
-        ),
-        onSendProgress: (sent, total) {
-          final progress = ((sent / total) * 100).toInt();
-          // Log every 20% to avoid spam
-          if (progress >= lastProgress + 20 || progress == 100) {
-            _logBlue('📤 Upload progress: $progress% ($sent / $total bytes)');
-            lastProgress = progress;
-          }
-        },
-      );
+      Response response;
 
-      return response.statusCode == 200 || response.statusCode == 204;
+      if (presigned.method == 'POST' && presigned.formFields.isNotEmpty) {
+        // Build multipart form-data: form_fields FIRST, file LAST
+        final formMap = <String, dynamic>{};
+
+        // 1. Add all AWS form fields first (order matters!)
+        presigned.formFields.forEach((key, value) {
+          formMap[key] = value.toString();
+        });
+
+        _logBlue('📦 Form fields: ${formMap.keys.toList()}');
+
+        // 2. Add the file LAST with field name 'file'
+        formMap['file'] = await MultipartFile.fromFile(
+          filePath,
+          filename: file.path.split('/').last,
+          contentType: DioMediaType.parse(mimeType),
+        );
+
+        final formData = FormData.fromMap(formMap);
+
+        response = await s3Dio.post(
+          presigned.uploadUrl,
+          data: formData,
+          options: Options(
+            // Don't set Content-Type - Dio sets it with multipart boundary
+            headers: {},
+          ),
+          onSendProgress: (sent, total) {
+            final progress = ((sent / total) * 100).toInt();
+            if (progress >= lastProgress + 20 || progress == 100) {
+              _logBlue('📤 Upload progress: $progress% ($sent / $total bytes)');
+              lastProgress = progress;
+            }
+          },
+        );
+      } else {
+        // Fallback: PUT raw bytes (legacy presigned URL endpoint)
+        final fileBytes = await file.readAsBytes();
+        response = await s3Dio.put(
+          presigned.uploadUrl,
+          data: fileBytes,
+          options: Options(
+            headers: {
+              'Content-Type': mimeType,
+              'Content-Length': fileSize.toString(),
+            },
+            contentType: mimeType,
+            requestEncoder: (request, options) => fileBytes,
+          ),
+          onSendProgress: (sent, total) {
+            final progress = ((sent / total) * 100).toInt();
+            if (progress >= lastProgress + 20 || progress == 100) {
+              _logBlue('📤 Upload progress: $progress% ($sent / $total bytes)');
+              lastProgress = progress;
+            }
+          },
+        );
+      }
+
+      _logBlue('📤 S3 Response: ${response.statusCode}');
+      return response.statusCode == 200 ||
+          response.statusCode == 201 ||
+          response.statusCode == 204;
     } on DioException catch (e) {
       if (e.type == DioExceptionType.sendTimeout) {
         _logRed('❌ Upload timed out - slow network');
@@ -183,16 +309,28 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
       _logGreen('📤 UPLOADING: ${recording.fileName}');
       _logGreen('   Phone: ${recording.phoneNumber ?? 'Unknown'}');
 
+      // Get actual file size from disk if recording.fileSize is 0
+      int actualFileSize = recording.fileSize;
+      if (actualFileSize == 0) {
+        try {
+          final f = File(recording.playablePath);
+          if (await f.exists()) {
+            actualFileSize = await f.length();
+          }
+        } catch (_) {}
+      }
+
       final presignedResponse = await getPresignedUrl(
         vendorId: vendorId,
         fileName: recording.fileName,
         mimeType: mimeType,
+        fileSize: actualFileSize,
       );
 
-      // Step 2: Upload to S3
+      // Step 2: Upload to S3 (POST multipart with form_fields)
       final playPath = recording.playablePath;
       final uploadSuccess = await uploadToS3(
-        uploadUrl: presignedResponse.uploadUrl,
+        presigned: presignedResponse,
         filePath: playPath,
         mimeType: mimeType,
       );

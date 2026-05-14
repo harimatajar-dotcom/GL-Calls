@@ -15,6 +15,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
   bool _isLoading = false;
   bool _phoneGranted = false;
   bool _storageGranted = false;
+  bool _notificationGranted = false;
 
   @override
   void initState() {
@@ -25,13 +26,15 @@ class _PermissionScreenState extends State<PermissionScreen> {
   Future<void> _checkExistingPermissions() async {
     final phoneStatus = await Permission.phone.status;
     final storageStatus = await _checkStoragePermission();
+    final notificationStatus = await Permission.notification.status;
 
     setState(() {
       _phoneGranted = phoneStatus.isGranted;
       _storageGranted = storageStatus;
+      _notificationGranted = notificationStatus.isGranted;
     });
 
-    if (_phoneGranted && _storageGranted) {
+    if (_phoneGranted && _storageGranted && _notificationGranted) {
       _navigateToDashboard();
     }
   }
@@ -84,11 +87,16 @@ class _PermissionScreenState extends State<PermissionScreen> {
 
     setState(() => _storageGranted = storageGranted);
 
-    if (_phoneGranted && _storageGranted) {
+    // Request notification permission (Android 13+)
+    final notificationStatus = await Permission.notification.request();
+    setState(() => _notificationGranted = notificationStatus.isGranted);
+
+    if (_phoneGranted && _storageGranted && _notificationGranted) {
       _navigateToDashboard();
     } else if (phoneStatus.isPermanentlyDenied ||
                await Permission.audio.isPermanentlyDenied ||
-               await Permission.storage.isPermanentlyDenied) {
+               await Permission.storage.isPermanentlyDenied ||
+               notificationStatus.isPermanentlyDenied) {
       _showSettingsDialog();
     } else {
       setState(() => _isLoading = false);
@@ -194,10 +202,11 @@ class _PermissionScreenState extends State<PermissionScreen> {
                 isGranted: _storageGranted,
               ),
               const SizedBox(height: 12),
-              _buildFeatureItem(
-                icon: Icons.storage,
-                title: 'Local Storage',
-                description: 'Your data is stored securely on your device',
+              _buildPermissionItem(
+                icon: Icons.notifications_active,
+                title: 'Notifications',
+                description: 'Receive sync alerts and service status updates',
+                isGranted: _notificationGranted,
               ),
               const SizedBox(height: 12),
               _buildFeatureItem(

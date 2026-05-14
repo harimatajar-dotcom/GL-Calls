@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/constants/country_codes.dart';
 import '../../../../core/error/exceptions.dart';
+import '../../../../core/network/api_client.dart';
+import '../../../../core/services/app_version_service.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/usecases/usecase.dart';
+import '../../data/datasources/auth_remote_datasource.dart';
 import '../../domain/entities/user_entity.dart';
 import '../../domain/usecases/login_usecase.dart';
 import '../../domain/usecases/logout_usecase.dart';
@@ -67,13 +73,38 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final fullPhoneNumber = '${_selectedCountry.dialCode}$phoneNumber';
+      // If input contains '@' it's an email - don't add country code
+      final isEmail = phoneNumber.contains('@');
+      final identifier = isEmail
+          ? phoneNumber.trim()
+          : '${_selectedCountry.dialCode}$phoneNumber';
+
+      // Persist selected dial code so background sync isolates can
+      // include it in call-sync payloads.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('country_code', _selectedCountry.dialCode);
+      await prefs.setString('country_iso', _selectedCountry.code);
       _user = await loginUseCase(
         LoginParams(
-          phoneNumber: fullPhoneNumber,
+          phoneNumber: identifier,
           password: password,
         ),
       );
+
+      // Fetch full user info from /api/mobile/businesses/{businessId}/users
+      await _fetchAndStoreUserInfo();
+
+      // Post tracking info to app-users API (non-blocking)
+      // mobile = whatever identifier was used to login (phone OR email)
+      if (_user != null) {
+        unawaited(AppVersionService.postUserDetails(
+          name: _user!.name,
+          email: _user!.email,
+          mobile: identifier,
+          vendorId: _user!.vendorId,
+        ));
+      }
+
       _status = AuthStatus.authenticated;
       notifyListeners();
 
@@ -101,6 +132,89 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = 'An unexpected error occurred';
       notifyListeners();
       return false;
+    }
+  }
+
+  /// After login: fetch list of businesses, auto-select if only one,
+  /// save selected business_id to SharedPreferences.
+  /// Per the v3 API contract, business.id and user.id are DIFFERENT ULIDs.
+  Future<void> _fetchAndStoreUserInfo() async {
+    try {
+      final currentUser = _user;
+      if (currentUser == null) return;
+
+      final remote = AuthRemoteDataSourceImpl(apiClient: ApiClient());
+
+      // Step 1: Fetch businesses the user has access to
+      final businesses = await remote.fetchBusinesses();
+      debugPrint('\x1B[32m[AuthProvider] Found ${businesses.length} business(es)\x1B[0m');
+
+      if (businesses.isEmpty) {
+        debugPrint('\x1B[33m[AuthProvider] No businesses found - user has no access\x1B[0m');
+        return;
+      }
+
+      // Step 2: Auto-select if only one, otherwise pick first (TODO: show picker for multi)
+      final selected = businesses.first;
+      final businessId = (selected['id'] ?? selected['business_id'] ?? '').toString();
+      final businessName = (selected['name'] ?? selected['business_name'] ?? '').toString();
+
+      if (businessId.isEmpty) {
+        debugPrint('\x1B[31m[AuthProvider] Business has no id field: $selected\x1B[0m');
+        return;
+      }
+
+      // Step 3: Save selected business_id to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('business_id', businessId);
+      if (businessName.isNotEmpty) {
+        await prefs.setString('business_name', businessName);
+      }
+      await prefs.setString('user_name', currentUser.name);
+      await prefs.setString('user_email', currentUser.email);
+
+      debugPrint('\x1B[32m[AuthProvider] ✅ Selected business: $businessName ($businessId)\x1B[0m');
+
+      // Step 3.5: Fetch business meta to get branch/company id
+      // This company_id is used as vendor_id for auto-sync-status tracking
+      try {
+        final companyId = await remote.fetchCompanyId(businessId);
+        if (companyId != null && companyId.isNotEmpty) {
+          await prefs.setString('company_id', companyId);
+          debugPrint('\x1B[32m[AuthProvider] ✅ Saved company_id: $companyId\x1B[0m');
+        }
+      } catch (e) {
+        debugPrint('\x1B[33m[AuthProvider] Company id fetch failed: $e\x1B[0m');
+      }
+
+      // Login response already has name + email + id, no need to refetch.
+      // Only call /users if we need extra fields (phone, role) and ONLY merge
+      // if the response has a non-empty name (otherwise we'd overwrite good data).
+      try {
+        final fullUser = await remote.fetchUserInfo(businessId);
+        if (fullUser != null && fullUser.name.isNotEmpty) {
+          _user = fullUser.copyWith(
+            token: currentUser.token,
+            businessId: businessId,
+          );
+          if (fullUser.userId != null) {
+            await prefs.setString('user_id', fullUser.userId!);
+          }
+          if (fullUser.phone != null) {
+            await prefs.setString('user_phone', fullUser.phone!);
+          }
+          if (fullUser.role != null) {
+            await prefs.setString('user_role', fullUser.role!);
+          }
+          debugPrint('\x1B[32m[AuthProvider] User info merged: ${fullUser.name}\x1B[0m');
+        } else {
+          debugPrint('\x1B[33m[AuthProvider] User info skipped (empty/null) - keeping login user\x1B[0m');
+        }
+      } catch (e) {
+        debugPrint('\x1B[33m[AuthProvider] User info fetch optional/failed: $e\x1B[0m');
+      }
+    } catch (e) {
+      debugPrint('\x1B[33m[AuthProvider] Business setup failed (non-fatal): $e\x1B[0m');
     }
   }
 

@@ -208,34 +208,72 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Consumer2<CallLogProvider, RecordingProvider>(
       builder: (context, callLogProvider, recordingProvider, _) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildWelcomeCard(context),
-              const SizedBox(height: 24),
-              _buildStatsGrid(callLogProvider),
-              const SizedBox(height: 24),
-              // _buildRecordingsCard(recordingProvider),
-              // const SizedBox(height: 24),
-              _buildUploadSection(recordingProvider),
-              const SizedBox(height: 24),
-              _buildAutoSyncSection(),
-              const SizedBox(height: 24),
-              _buildDirectSyncSection(recordingProvider),
-              const SizedBox(height: 24),
-              if (recordingProvider.uploadedRecordings.isNotEmpty)
-                _buildUploadedRecordings(recordingProvider),
-              if (recordingProvider.uploadedRecordings.isNotEmpty)
+        return Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Color(0xFFF5F7FA),
+                Color(0xFFFFFFFF),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.3],
+            ),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 100),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildWelcomeCard(context),
+                const SizedBox(height: 20),
+                _buildSectionHeader('Activity Overview', 'Your call statistics at a glance'),
+                const SizedBox(height: 12),
+                _buildStatsGrid(callLogProvider),
                 const SizedBox(height: 24),
-              // _buildQuickActions(callLogProvider),
-              // const SizedBox(height: 24),
-              _buildRecentCalls(callLogProvider),
-            ],
+                _buildSectionHeader('Smart Features', 'Automate your workflow'),
+                const SizedBox(height: 12),
+                _buildAutoSyncSection(),
+                const SizedBox(height: 24),
+                if (recordingProvider.uploadedRecordings.isNotEmpty) ...[
+                  _buildUploadedRecordings(recordingProvider),
+                  const SizedBox(height: 24),
+                ],
+                _buildRecentCalls(callLogProvider),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSectionHeader(String title, String subtitle) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.4,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary.withValues(alpha: 0.8),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -244,80 +282,174 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final callLogProvider = context.watch<CallLogProvider>();
     final userName = authProvider.user?.name ?? 'User';
     final totalCalls = callLogProvider.callLogs.length;
+    final now = DateTime.now();
+    final greeting = now.hour < 12
+        ? 'Good Morning'
+        : now.hour < 17
+            ? 'Good Afternoon'
+            : 'Good Evening';
+    final dateStr = '${_dayName(now.weekday)}, ${now.day} ${_monthName(now.month)}';
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
+          colors: [
+            Color(0xFFE53935),
+            Color(0xFFC62828),
+            Color(0xFFB71C1C),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          stops: [0.0, 0.5, 1.0],
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: AppColors.primary.withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+            spreadRadius: -4,
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Text(
-            'Welcome back,',
-            style: TextStyle(
-              fontSize: 14,
-              color: AppColors.white.withValues(alpha: 0.8),
+          // Decorative circles
+          Positioned(
+            right: -20,
+            top: -20,
+            child: Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            userName,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppColors.white,
+          Positioned(
+            right: 30,
+            bottom: -30,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                shape: BoxShape.circle,
+              ),
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            now.hour < 12
+                                ? Icons.wb_sunny_rounded
+                                : now.hour < 17
+                                    ? Icons.wb_cloudy_rounded
+                                    : Icons.nightlight_round,
+                            color: Colors.white.withValues(alpha: 0.9),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            greeting,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withValues(alpha: 0.9),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        userName,
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        dateStr,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.25),
+                        width: 1,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.phone_in_talk_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppColors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    width: 1,
+                  ),
                 ),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.storage, color: AppColors.white, size: 16),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$totalCalls Calls Saved',
-                      style: const TextStyle(color: AppColors.white, fontSize: 12),
+                    _buildHeroStat(
+                      icon: Icons.phone_rounded,
+                      value: totalCalls.toString(),
+                      label: 'Total Calls',
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.check_circle, color: AppColors.white, size: 16),
-                    SizedBox(width: 6),
-                    Text(
-                      'Synced',
-                      style: TextStyle(color: AppColors.white, fontSize: 12),
+                    Container(
+                      width: 1,
+                      height: 32,
+                      color: Colors.white.withValues(alpha: 0.2),
+                    ),
+                    _buildHeroStat(
+                      icon: _isAutoSyncEnabled
+                          ? Icons.cloud_done_rounded
+                          : Icons.cloud_off_rounded,
+                      value: _isAutoSyncEnabled ? 'ON' : 'OFF',
+                      label: 'Auto Sync',
+                    ),
+                    Container(
+                      width: 1,
+                      height: 32,
+                      color: Colors.white.withValues(alpha: 0.2),
+                    ),
+                    _buildHeroStat(
+                      icon: Icons.shield_rounded,
+                      value: 'Active',
+                      label: 'Status',
                     ),
                   ],
                 ),
@@ -327,6 +459,50 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
     );
+  }
+
+  Widget _buildHeroStat({
+    required IconData icon,
+    required String value,
+    required String label,
+  }) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.white, size: 18),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.white.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _dayName(int weekday) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days[(weekday - 1) % 7];
+  }
+
+  String _monthName(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[(month - 1) % 12];
   }
 
   Widget _buildStatsGrid(CallLogProvider provider) {
@@ -335,154 +511,254 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final missedCount = provider.missedCalls.length;
     final totalCount = provider.callLogs.length;
 
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      mainAxisSpacing: 14,
-      crossAxisSpacing: 14,
-      childAspectRatio: 1.45,
+    // Calculate percentages for progress visualization
+    final maxCount = [incomingCount, outgoingCount, missedCount, 1]
+        .reduce((a, b) => a > b ? a : b);
+
+    return Column(
       children: [
-        _buildStatCard(
-          icon: Icons.call_received_rounded,
-          label: 'Incoming',
-          value: incomingCount.toString(),
-          color: AppColors.success,
-          gradientColors: [AppColors.success, Colors.green.shade700],
+        // Total calls hero stat
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: Colors.grey.withValues(alpha: 0.08),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.deepPurple.shade400,
+                      Colors.deepPurple.shade700,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.deepPurple.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.analytics_rounded,
+                  color: Colors.white,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Total Calls',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary.withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          totalCount.toString(),
+                          style: const TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                            letterSpacing: -1.0,
+                            height: 1.0,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'calls',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.trending_up_rounded,
+                      color: AppColors.success,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Active',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-        _buildStatCard(
-          icon: Icons.call_made_rounded,
-          label: 'Outgoing',
-          value: outgoingCount.toString(),
-          color: AppColors.warning,
-          gradientColors: [AppColors.warning, Colors.orange.shade700],
-        ),
-        _buildStatCard(
-          icon: Icons.call_missed_rounded,
-          label: 'Missed',
-          value: missedCount.toString(),
-          color: AppColors.error,
-          gradientColors: [AppColors.error, Colors.red.shade700],
-        ),
-        _buildStatCard(
-          icon: Icons.phone_rounded,
-          label: 'Total',
-          value: totalCount.toString(),
-          color: Colors.purple,
-          gradientColors: [Colors.purple.shade400, Colors.purple.shade700],
+        const SizedBox(height: 12),
+        // 3 stat cards in a row
+        Row(
+          children: [
+            Expanded(
+              child: _buildModernStatCard(
+                icon: Icons.call_received_rounded,
+                label: 'Incoming',
+                value: incomingCount,
+                maxValue: maxCount,
+                color: AppColors.success,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildModernStatCard(
+                icon: Icons.call_made_rounded,
+                label: 'Outgoing',
+                value: outgoingCount,
+                maxValue: maxCount,
+                color: const Color(0xFFFF8C00),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildModernStatCard(
+                icon: Icons.call_missed_rounded,
+                label: 'Missed',
+                value: missedCount,
+                maxValue: maxCount,
+                color: AppColors.error,
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildStatCard({
+  Widget _buildModernStatCard({
     required IconData icon,
     required String label,
-    required String value,
+    required int value,
+    required int maxValue,
     required Color color,
-    required List<Color> gradientColors,
   }) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isCompact = constraints.maxHeight < 100;
-        final iconSize = isCompact ? 16.0 : 18.0;
-        final iconPadding = isCompact ? 8.0 : 10.0;
-        final valueFontSize = isCompact ? 18.0 : 20.0;
-        final labelFontSize = isCompact ? 13.0 : 14.0;
-        final padding = isCompact ? 12.0 : 14.0;
+    final percentage = maxValue > 0 ? (value / maxValue).clamp(0.0, 1.0) : 0.0;
 
-        return Container(
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: color.withValues(alpha: 0.1),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.12),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-                spreadRadius: 0,
-              ),
-              BoxShadow(
-                color: AppColors.black.withValues(alpha: 0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withValues(alpha: 0.1),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-          child: Padding(
-            padding: EdgeInsets.all(padding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.max,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Icon with gradient
-                    Container(
-                      padding: EdgeInsets.all(iconPadding),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: gradientColors,
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: [
-                          BoxShadow(
-                            color: color.withValues(alpha: 0.4),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Icon(icon, color: AppColors.white, size: iconSize),
-                    ),
-                    // Value
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        value,
-                        style: TextStyle(
-                          fontSize: valueFontSize,
-                          fontWeight: FontWeight.w800,
-                          color: color,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: labelFontSize,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                Text(
-                  'calls',
-                  style: TextStyle(
-                    fontSize: isCompact ? 10.0 : 11.0,
-                    color: AppColors.textSecondary.withValues(alpha: 0.7),
-                  ),
-                ),
-              ],
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Icon
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(height: 12),
+          // Value
+          Text(
+            value.toString(),
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.8,
+              height: 1.0,
             ),
           ),
-        );
-      },
+          const SizedBox(height: 4),
+          // Label
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              height: 4,
+              color: color.withValues(alpha: 0.12),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: percentage,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [color.withValues(alpha: 0.7), color],
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
