@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/services/sync_failure_notifier.dart';
 import '../../../../core/services/synced_call_ledger.dart';
 import '../../domain/entities/recording_entity.dart';
 import '../../domain/repositories/recording_repository.dart';
@@ -232,10 +233,18 @@ class RecordingRepositoryImpl implements RecordingRepository {
         }
       } else {
         await SyncedCallLedger.release(data.callId);
+        await SyncFailureNotifier.notifyFailure(
+          phoneNumber: data.phoneNumber,
+          reason: 'Server did not accept the sync (HTTP error)',
+        );
       }
       return ok;
     } catch (e) {
       await SyncedCallLedger.release(data.callId);
+      await SyncFailureNotifier.notifyFailure(
+        phoneNumber: data.phoneNumber,
+        reason: 'Network error: ${e.toString().split('\n').first}',
+      );
       rethrow;
     }
   }

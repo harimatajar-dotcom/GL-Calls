@@ -16,6 +16,7 @@ import '../../features/recordings/data/models/recording_model.dart';
 import '../../features/recordings/domain/entities/recording_entity.dart';
 import '../network/api_client.dart';
 import 'log_service.dart';
+import 'sync_failure_notifier.dart';
 import 'synced_call_ledger.dart';
 
 class AutoSyncService {
@@ -152,10 +153,20 @@ class AutoSyncService {
         await SyncedCallLedger.commit(data.callId);
       } else {
         await SyncedCallLedger.release(data.callId);
+        // Push a system notification with sound so the user notices even
+        // when the app is closed. Retry will run on the next sync cycle.
+        await SyncFailureNotifier.notifyFailure(
+          phoneNumber: data.phoneNumber,
+          reason: 'Server did not accept the sync (HTTP error)',
+        );
       }
       return ok;
     } catch (e) {
       await SyncedCallLedger.release(data.callId);
+      await SyncFailureNotifier.notifyFailure(
+        phoneNumber: data.phoneNumber,
+        reason: 'Network error: ${e.toString().split('\n').first}',
+      );
       rethrow;
     }
   }
@@ -462,6 +473,10 @@ class AutoSyncService {
 
     if (uploadedRecording == null) {
       _logRed('Upload failed');
+      await SyncFailureNotifier.notifyFailure(
+        phoneNumber: recording.phoneNumber,
+        reason: 'Recording upload to S3 failed',
+      );
       return;
     }
 

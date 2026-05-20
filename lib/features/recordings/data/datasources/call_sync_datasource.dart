@@ -58,7 +58,10 @@ class CallSyncData {
     RecordingModel recording, {
     String? countryCode,
   }) {
-    final phoneNumber = recording.phoneNumber ?? 'unknown';
+    final phoneNumber = _normalizePhoneForWire(
+      recording.phoneNumber ?? 'unknown',
+      countryCode,
+    );
     final direction = _directionFor(recording.callType);
 
     // Deterministic call_id derived from (phone + actual call time + direction).
@@ -95,6 +98,31 @@ class CallSyncData {
     );
   }
 
+  /// Prepend the user's country code (digits only) to bare 10-digit
+  /// numbers so the server gets the full international form.
+  ///
+  /// Strict rule: ONLY rewrites when the input is EXACTLY 10 digits with
+  /// no other characters. Anything else — already-prefixed numbers,
+  /// numbers with `+`, spaces, dashes, or any length other than 10 — is
+  /// returned unchanged.
+  ///
+  /// This is wire-format normalization only. It does NOT affect the
+  /// deterministic call_id (which always uses last-10-digit hashing), so
+  /// previously-synced calls stay matched in the dedup ledger after the
+  /// fix lands.
+  static String _normalizePhoneForWire(String phoneNumber, String? countryCode) {
+    if (phoneNumber.isEmpty || phoneNumber == 'unknown') return phoneNumber;
+    // Strict match: exactly 10 digits, no leading +, no spaces, no dashes.
+    final isBareTen = RegExp(r'^\d{10}$').hasMatch(phoneNumber);
+    if (!isBareTen) return phoneNumber;
+    // Default to "+91" when no preference is stored (matches the rest of
+    // the codebase's India-default behavior).
+    final cc = (countryCode == null || countryCode.isEmpty ? '+91' : countryCode)
+        .replaceAll(RegExp(r'\D'), '');
+    if (cc.isEmpty) return phoneNumber;
+    return '$cc$phoneNumber';
+  }
+
   /// Resolve mime type from filename extension
   static String _mimeFromFileName(String fileName) {
     final ext = fileName.toLowerCase().split('.').last;
@@ -125,7 +153,10 @@ class CallSyncData {
     RecordingModel recording, {
     String? countryCode,
   }) {
-    final phoneNumber = recording.phoneNumber ?? 'unknown';
+    final phoneNumber = _normalizePhoneForWire(
+      recording.phoneNumber ?? 'unknown',
+      countryCode,
+    );
     final direction = _directionFor(recording.callType);
 
     final callId = buildDeterministicCallId(
@@ -164,9 +195,10 @@ class CallSyncData {
   }) {
     final direction = _directionFor(callType);
     final effectiveCallTime = callTime ?? DateTime.now();
+    final normalizedPhone = _normalizePhoneForWire(phoneNumber, countryCode);
 
     final callId = buildDeterministicCallId(
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
       callTime: effectiveCallTime,
       direction: direction,
     );
@@ -184,7 +216,7 @@ class CallSyncData {
 
     return CallSyncData(
       callId: callId,
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
       countryCode: countryCode,
       callStartAt: callStartAt,
       duration: effectiveDuration,

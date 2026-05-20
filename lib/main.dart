@@ -5,6 +5,7 @@ import 'core/core.dart';
 import 'core/services/background_service.dart';
 import 'core/services/health_check_service.dart';
 import 'core/services/log_service.dart';
+import 'core/services/sync_failure_notifier.dart';
 import 'core/services/workmanager_service.dart';
 import 'features/features.dart';
 
@@ -26,6 +27,11 @@ void main() async {
   // Initialize health check service (Samsung-resistant alarm)
   await HealthCheckService.initialize();
   LogService.success('Health check service initialized', tag: 'HealthCheck');
+
+  // Initialize push notifier for sync failures (high-importance channel
+  // with sound so the user is alerted even when the app is closed)
+  await SyncFailureNotifier.initialize();
+  LogService.success('Sync failure notifier initialized', tag: 'SyncFailureNotifier');
 
   // Initialize WorkManager for backup sync (non-blocking)
   _initializeWorkManager();
