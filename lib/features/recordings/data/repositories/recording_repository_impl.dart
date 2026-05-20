@@ -204,7 +204,20 @@ class RecordingRepositoryImpl implements RecordingRepository {
   /// Uses [SyncedCallLedger.tryAcquire] / [commit] / [release] so a
   /// concurrent sync from the background isolate cannot race past us
   /// between the "is it synced" check and the POST.
+  ///
+  /// Also checks the filename history as a second-line defense: even if a
+  /// recording's timestamp drifts across a UTC-minute boundary (producing
+  /// a different call_id), the filename itself stays constant, so the
+  /// same physical recording is never POSTed twice.
   Future<bool> _syncIfNew(CallSyncData data) async {
+    // Filename gate — runs BEFORE the call_id lease so we short-circuit
+    // even when call_id differs due to time drift between sync paths.
+    final fileName = data.fileName ?? '';
+    if (fileName.isNotEmpty && await SyncedCallLedger.isFileNameSynced(fileName)) {
+      _logYellow('⏭️  Skipping — file_name "$fileName" already synced (history match)');
+      return true;
+    }
+
     final acquired = await SyncedCallLedger.tryAcquire(data.callId);
     if (!acquired) {
       _logYellow('⏭️  Skipping duplicate sync — call_id ${data.callId} already synced or in-flight');
@@ -214,6 +227,9 @@ class RecordingRepositoryImpl implements RecordingRepository {
       final ok = await callSyncDataSource.syncCall(data);
       if (ok) {
         await SyncedCallLedger.commit(data.callId);
+        if (fileName.isNotEmpty) {
+          await SyncedCallLedger.markFileNameSynced(fileName);
+        }
       } else {
         await SyncedCallLedger.release(data.callId);
       }

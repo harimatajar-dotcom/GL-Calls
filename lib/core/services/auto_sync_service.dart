@@ -239,7 +239,7 @@ class AutoSyncService {
         }
 
         // Upload the latest unuploaded recording
-        await _uploadAndSync(latestUnuploaded, vendorId);
+        await _uploadAndSync(latestUnuploaded, vendorId, fallbackDuration: fallbackDuration);
         return;
       }
 
@@ -258,7 +258,7 @@ class AutoSyncService {
         }
 
         // Upload the latest unuploaded recording
-        await _uploadAndSync(latestUnuploaded, vendorId);
+        await _uploadAndSync(latestUnuploaded, vendorId, fallbackDuration: fallbackDuration);
         return;
       }
 
@@ -394,7 +394,7 @@ class AutoSyncService {
     }
   }
 
-  Future<void> _uploadAndSync(dynamic recording, int vendorId) async {
+  Future<void> _uploadAndSync(dynamic recording, int vendorId, {int fallbackDuration = 0}) async {
     _logGreen('Found recording: ${recording.fileName}');
 
     // Check if file exists
@@ -417,6 +417,16 @@ class AutoSyncService {
         return;
       }
 
+      // Resolve real duration: scanner value → CALL_ENDED-derived
+      // fallback → call_log → last-resort 1. Scanner duration is 0 by
+      // default, and the audio-file probe is skipped for dummy uploads,
+      // so without these fallbacks the server gets 1s for every call.
+      final dummyDuration = recording.duration > 0
+          ? recording.duration
+          : (fallbackDuration > 0
+              ? fallbackDuration
+              : await _getDurationFromCallLog(recording.phoneNumber));
+
       // Create a modified recording with the dummy file path
       recordingToUpload = RecordingModel(
         id: recording.id,
@@ -425,13 +435,13 @@ class AutoSyncService {
         localPath: dummyFilePath,
         phoneNumber: recording.phoneNumber,
         contactName: recording.contactName,
-        duration: recording.duration > 0 ? recording.duration : 1,
+        duration: dummyDuration > 0 ? dummyDuration : 1,
         fileSize: 16044, // Size of silent.wav
         createdAt: recording.createdAt,
         callType: recording.callType,
       );
       usedDummyFile = true;
-      _logGreen('Using dummy audio file: $dummyFilePath');
+      _logGreen('Using dummy audio file: $dummyFilePath (duration: ${recordingToUpload.duration}s)');
     }
 
     // Get audio duration if not set
@@ -482,9 +492,28 @@ class AutoSyncService {
     _logGreen('   Call type from call log: $finalCallType');
     _logGreen('   ➡️ DIRECTION: ${finalCallType == CallType.outgoing ? "OUTBOUND" : "INBOUND"}');
 
+    // Pick the best available duration. `recording.duration` is the
+    // scanner's value (almost always 0). `recordingWithDuration.duration`
+    // is the value just probed from the audio file. Fall back to the
+    // CALL_ENDED-derived `fallbackDuration`, then to a call-log lookup,
+    // and only land on 1 as a last resort so the server never sees
+    // "1 second" for a real 30-second call.
+    int actualDuration = recordingWithDuration.duration > 0
+        ? recordingWithDuration.duration
+        : (recording.duration > 0
+            ? recording.duration
+            : (fallbackDuration > 0
+                ? fallbackDuration
+                : await _getDurationFromCallLog(recording.phoneNumber)));
+    if (actualDuration <= 0) actualDuration = 1;
+
+    _logGreen('   📏 Final duration resolved: ${actualDuration}s '
+        '(scanner=${recording.duration}, audio=${recordingWithDuration.duration}, '
+        'fallback=$fallbackDuration)');
+
     final syncRecording = uploadedRecording.copyWith(
       phoneNumber: recording.phoneNumber,
-      duration: recording.duration > 0 ? recording.duration : 1,
+      duration: actualDuration,
       callType: finalCallType,
     );
     final countryCode = await _readCountryCode();
@@ -768,6 +797,45 @@ class AutoSyncService {
   }
 
   /// Get call type from call log by matching phone number (last 10 minutes)
+  /// Look up the actual duration (seconds) for [phoneNumber] in the device
+  /// call log, scanning the last 10 minutes. Returns 0 if no match —
+  /// callers should chain another fallback after this.
+  Future<int> _getDurationFromCallLog(String? phoneNumber) async {
+    if (phoneNumber == null || phoneNumber.isEmpty) return 0;
+    try {
+      final now = DateTime.now();
+      final tenMinutesAgo = now.subtract(const Duration(minutes: 10));
+      final entries = await call_log.CallLog.query(
+        dateFrom: tenMinutesAgo.millisecondsSinceEpoch,
+        dateTo: now.millisecondsSinceEpoch,
+      );
+
+      final phoneDigits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+      final phoneLast10 = phoneDigits.length >= 10
+          ? phoneDigits.substring(phoneDigits.length - 10)
+          : phoneDigits;
+
+      for (final entry in entries) {
+        if (entry.number == null) continue;
+        final entryDigits = entry.number!.replaceAll(RegExp(r'\D'), '');
+        final entryLast10 = entryDigits.length >= 10
+            ? entryDigits.substring(entryDigits.length - 10)
+            : entryDigits;
+        if (entryLast10 == phoneLast10) {
+          final d = entry.duration ?? 0;
+          if (d > 0) {
+            _logGreen('   📏 Duration from call_log: ${d}s (matched $entryLast10)');
+            return d;
+          }
+        }
+      }
+      return 0;
+    } catch (e) {
+      _logRed('Error getting duration from call log: $e');
+      return 0;
+    }
+  }
+
   Future<CallType> _getCallTypeFromCallLog(String? phoneNumber) async {
     try {
       final now = DateTime.now();

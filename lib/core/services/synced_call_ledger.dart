@@ -29,6 +29,7 @@ class SyncedCallLedger {
 
   static const String _key = 'synced_call_ids_v1';
   static const String _inFlightKeyPrefix = 'sync_in_flight_';
+  static const String _fileNameKey = 'synced_file_names_v1';
   static const int _maxEntries = 2000;
   static const Duration _inFlightTtl = Duration(seconds: 45);
 
@@ -111,5 +112,35 @@ class SyncedCallLedger {
   /// haven't migrated to the [tryAcquire] / [commit] flow yet.
   static Future<void> markSynced(String callId) async {
     await commit(callId);
+  }
+
+  /// Returns true if a recording with [fileName] has already been synced.
+  ///
+  /// This is a second-line defense alongside the deterministic call_id:
+  /// even if a file's timestamp drifts across a UTC-minute boundary
+  /// (producing a different call_id), the filename itself stays constant,
+  /// so the same physical recording can never be POSTed twice.
+  static Future<bool> isFileNameSynced(String fileName) async {
+    if (fileName.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final names = prefs.getStringList(_fileNameKey) ?? const [];
+    return names.contains(fileName);
+  }
+
+  /// Persist [fileName] in the synced-filename history. Idempotent.
+  /// Capped at [_maxEntries] with FIFO eviction.
+  static Future<void> markFileNameSynced(String fileName) async {
+    if (fileName.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final names = List<String>.from(prefs.getStringList(_fileNameKey) ?? const []);
+    if (!names.contains(fileName)) {
+      names.add(fileName);
+      if (names.length > _maxEntries) {
+        names.removeRange(0, names.length - _maxEntries);
+      }
+      await prefs.setStringList(_fileNameKey, names);
+    }
   }
 }

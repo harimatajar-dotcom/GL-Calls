@@ -93,24 +93,23 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                   String? phoneNumber = _extractPhoneNumber(fileName);
                   CallType callType = CallType.unknown;
                   String? contactName;
+                  final matchedCall = _findMatchingCallLog(stat.modified);
 
-                  // If no phone number found, try to match with call log
-                  if (phoneNumber == null) {
-                    final matchedCall = _findMatchingCallLog(stat.modified);
-                    if (matchedCall != null) {
-                      phoneNumber = matchedCall.number;
-                      contactName = matchedCall.name;
-                      callType = _mapCallType(matchedCall.callType);
-                      _logCyan('📞 MATCHED: $fileName → ${matchedCall.number} (${matchedCall.name ?? 'Unknown'})');
-                    }
-                  } else {
-                    // Phone number found in filename, still try to get call type
-                    final matchedCall = _findMatchingCallLog(stat.modified);
-                    if (matchedCall != null) {
-                      callType = _mapCallType(matchedCall.callType);
-                      contactName = matchedCall.name;
-                    }
+                  if (matchedCall != null) {
+                    phoneNumber ??= matchedCall.number;
+                    contactName = matchedCall.name;
+                    callType = _mapCallType(matchedCall.callType);
+                    _logCyan('📞 MATCHED: $fileName → ${matchedCall.number} (${matchedCall.name ?? 'Unknown'})');
                   }
+
+                  // Prefer call-log timestamp over file mtime — mtime fires
+                  // when the OS finishes writing, often 30-90s after the call
+                  // starts. That skew can push the same call into a different
+                  // minute bucket than the direct-sync path uses, producing
+                  // two different call_ids for one call.
+                  final createdAt = matchedCall?.timestamp != null
+                      ? DateTime.fromMillisecondsSinceEpoch(matchedCall!.timestamp!)
+                      : stat.modified;
 
                   recordings.add(RecordingModel(
                     fileName: fileName,
@@ -119,7 +118,7 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                     contactName: contactName,
                     duration: 0, // Will be updated when playing
                     fileSize: stat.size,
-                    createdAt: stat.modified,
+                    createdAt: createdAt,
                     isSynced: false,
                     callType: callType,
                   ));
@@ -187,6 +186,13 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                     _logCyan('📞 MATCHED: $fileName → ${matchedCall.number} (${matchedCall.name ?? 'Unknown'})');
                   }
 
+                  // See note in scanForRecordings — prefer call-log
+                  // timestamp over file mtime so direct-sync and
+                  // scanner-sync hash to the same call_id.
+                  final createdAt = matchedCall?.timestamp != null
+                      ? DateTime.fromMillisecondsSinceEpoch(matchedCall!.timestamp!)
+                      : stat.modified;
+
                   final recording = RecordingModel(
                     fileName: fileName,
                     filePath: entity.path,
@@ -194,7 +200,7 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                     contactName: contactName,
                     duration: 0,
                     fileSize: stat.size,
-                    createdAt: stat.modified,
+                    createdAt: createdAt,
                     isSynced: false,
                     callType: callType,
                   );
@@ -317,7 +323,13 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
 
     for (final num in numbers) {
       if (num.length >= 10 && num.length <= 15) {
-        return num;
+        // Anchor to last 10 digits so OEM noise (timestamps, SIM ids,
+        // sequence numbers) prepended to the real phone can never poison
+        // the call_id hash.
+        final digits = num.replaceAll(RegExp(r'\D'), '');
+        if (digits.length >= 10) {
+          return digits.substring(digits.length - 10);
+        }
       }
     }
 
