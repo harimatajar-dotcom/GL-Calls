@@ -100,6 +100,13 @@ class AutoSyncService {
               : 0;
           _logGreen('Calculated call duration: ${callDuration}s');
           _wasInCall = false;
+          // A-10: Reset _callStartTime so the next call starts fresh.
+          // CALL_STARTED already overwrites it, but CALL_INCOMING /
+          // CALL_OUTGOING use `??=` (don't overwrite), so if the next
+          // call goes ringing → ended without a CALL_STARTED in
+          // between, stale _callStartTime from THIS call would be
+          // reused and the next callDuration would be wildly inflated.
+          _callStartTime = null;
           // Wait longer for call log to be updated (10 seconds)
           Future.delayed(const Duration(seconds: 10), () {
             _autoSyncLatestRecording(fallbackDuration: callDuration);
