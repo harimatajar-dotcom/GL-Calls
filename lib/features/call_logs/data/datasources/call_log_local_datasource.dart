@@ -26,7 +26,12 @@ class CallLogLocalDataSourceImpl implements CallLogLocalDataSource {
         callType: _mapCallType(entry.callType),
         timestamp: DateTime.fromMillisecondsSinceEpoch(entry.timestamp ?? 0),
         duration: entry.duration ?? 0,
-        cachedName: entry.cachedMatchedNumber,
+        // A-7 fix: cachedName must contain the cached contact NAME, not
+        // a phone number. The prior code assigned cachedMatchedNumber
+        // here, which is a normalized phone number; combined with
+        // displayName preferring cachedName, the UI showed raw numbers
+        // instead of contact names even when one was cached.
+        cachedName: entry.name,
       );
     }).toList();
   }
