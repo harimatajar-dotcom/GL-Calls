@@ -148,6 +148,14 @@ class SyncedCallLedger {
     }
     await prefs.remove('$_inFlightKeyPrefix$callId');
     _inFlightLocal.remove(callId);
+
+    // B-§6.4: Stamp the "last successful sync" timestamp so the
+    // diagnostic kit's SYNC_LAST_OK check can show the user when the
+    // most recent call actually committed.
+    await prefs.setInt(
+      'last_successful_sync_ms',
+      DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   /// Refresh the in-flight lease timestamp so it doesn't expire during a

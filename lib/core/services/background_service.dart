@@ -360,6 +360,20 @@ void onStart(ServiceInstance service) async {
     // when no events seen AND the device wasn't idle. That is NOT a
     // simple periodic teardown.
 
+    // B-§6.3: Persist last_heartbeat_ms so the diagnostic kit's
+    // SVC_HEARTBEAT check can prove the service is actually running
+    // (not a zombie). The Diagnostic screen reads this key and flags
+    // it stale if older than ~2 min.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(
+        'last_heartbeat_ms',
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (_) {
+      // Best-effort; failure here doesn't affect sync.
+    }
+
     // Log heartbeat
     debugPrint('\x1B[34m[BackgroundService] Heartbeat #$heartbeatCount - ${DateTime.now()}\x1B[0m');
   });
