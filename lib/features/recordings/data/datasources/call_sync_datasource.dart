@@ -260,24 +260,49 @@ class CallSyncData {
 
   /// Build a stable call_id from the call's intrinsic properties.
   ///
-  /// Inputs are deliberately limited to (normalized phone, minute-bucketed
-  /// time). Direction is intentionally NOT part of the hash — a real call
-  /// has exactly one direction, and including it means a misdetected
-  /// direction creates a phantom duplicate (same number appearing in both
-  /// inbound and outbound on the dashboard).
+  /// Hash input: `(normalized phone | UTC-minute | direction)`.
   ///
-  /// `direction` is still accepted for backwards-compatible call sites but
-  /// is ignored.
+  /// Why direction is now part of the hash (A-2 fix). Previously direction
+  /// was excluded to avoid phantom duplicates when the scanner and direct-
+  /// sync paths disagreed on direction. With the authoritative call-log
+  /// direction lookup (`resolveDirectionFromCallLog`) and the matching
+  /// improvements in A-1, both paths now agree on direction reliably. The
+  /// old scheme silently dropped the second of two genuine calls in
+  /// opposite directions within the same minute (e.g. a quick callback) —
+  /// they hashed to the same id and the second was treated as a dup.
+  ///
+  /// Direction is folded into a 3-state token (`in`/`out`/`?`) so that a
+  /// `null`/unknown direction still produces a stable id rather than two
+  /// different ids depending on which call site supplied it. Direction
+  /// MUST come from the call-log resolver, not the scanner's default —
+  /// see [resolveDirectionFromCallLog].
+  ///
+  /// Trade-off acknowledged: two genuine calls in the **same** direction
+  /// to the same number within the same UTC minute still collide. That
+  /// collision is rare in practice (back-to-back outbound redials are the
+  /// main case) and tightening to seconds is not safe because the scanner
+  /// and direct-sync paths can disagree on the second-level timestamp.
   static String buildDeterministicCallId({
     required String phoneNumber,
     required DateTime callTime,
-    String? direction, // ignored — kept for source compatibility
+    String? direction,
   }) {
     final phone = normalizePhoneForId(phoneNumber);
     final minute = bucketCallTimeToMinute(callTime).toIso8601String();
-    final input = '$phone|$minute';
+    final dirToken = _directionToken(direction);
+    final input = '$phone|$minute|$dirToken';
     final hex = _fnv1a64Hex(input);
     return 'CALL_$hex';
+  }
+
+  /// Normalize a direction string into a stable 3-state token so the hash
+  /// stays deterministic regardless of casing/null.
+  static String _directionToken(String? direction) {
+    if (direction == null) return '?';
+    final lower = direction.toLowerCase().trim();
+    if (lower == 'outbound' || lower == 'outgoing' || lower == 'out') return 'out';
+    if (lower == 'inbound' || lower == 'incoming' || lower == 'in') return 'in';
+    return '?';
   }
 
   /// Resolve the authoritative direction for a call by looking it up in
