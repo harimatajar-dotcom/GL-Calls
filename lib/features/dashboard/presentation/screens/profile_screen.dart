@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/di/injection_container.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../diagnostics/presentation/providers/diagnostics_provider.dart';
+import '../../../diagnostics/presentation/screens/diagnostics_screen.dart';
 import 'logs_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -156,10 +159,22 @@ class ProfileScreen extends StatelessWidget {
                 ),
                 const Divider(height: 1),
                 _buildSettingItem(
-                  icon: Icons.security_outlined,
-                  title: 'Privacy & Security',
-                  subtitle: 'Manage your data',
-                  onTap: () {},
+                  icon: Icons.fact_check_outlined,
+                  title: 'Run Diagnostics',
+                  subtitle: 'Self-test sync readiness',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChangeNotifierProvider(
+                          create: (_) => DiagnosticsProvider(
+                            apiClient: sl.apiClient,
+                          ),
+                          child: const DiagnosticsScreen(),
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const Divider(height: 1),
                 _buildSettingItem(
