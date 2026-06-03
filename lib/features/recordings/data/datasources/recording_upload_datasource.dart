@@ -328,12 +328,30 @@ class RecordingUploadDataSourceImpl implements RecordingUploadDataSource {
       );
 
       // Step 2: Upload to S3 (POST multipart with form_fields)
+      // A-13: retry with exponential backoff. ApiConstants.maxRetryAttempts
+      // was defined but unused. Transient S3 5xx, timeouts, and brief
+      // network blips routinely failed the upload permanently — now we
+      // retry up to maxRetryAttempts with 2s/4s/8s waits.
       final playPath = recording.playablePath;
-      final uploadSuccess = await uploadToS3(
-        presigned: presignedResponse,
-        filePath: playPath,
-        mimeType: mimeType,
-      );
+      bool uploadSuccess = false;
+      for (int attempt = 1; attempt <= ApiConstants.maxRetryAttempts; attempt++) {
+        try {
+          uploadSuccess = await uploadToS3(
+            presigned: presignedResponse,
+            filePath: playPath,
+            mimeType: mimeType,
+          );
+          if (uploadSuccess) break;
+          _logRed('Upload attempt $attempt/${ApiConstants.maxRetryAttempts} returned false');
+        } catch (e) {
+          _logRed('Upload attempt $attempt/${ApiConstants.maxRetryAttempts} threw: $e');
+        }
+        if (attempt < ApiConstants.maxRetryAttempts) {
+          final waitSeconds = 2 << (attempt - 1); // 2s, 4s, 8s ...
+          _logBlue('Retrying upload in ${waitSeconds}s...');
+          await Future.delayed(Duration(seconds: waitSeconds));
+        }
+      }
 
       if (uploadSuccess) {
         _logGreen('✅ SUCCESS: Uploaded to S3');
