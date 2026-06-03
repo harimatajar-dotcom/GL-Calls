@@ -21,6 +21,12 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- A-6: Battery-optimisation exemption. Without this OEM battery
+         managers (Samsung/Xiaomi/Oppo/Vivo) silently kill our foreground
+         service after a few hours and sync stops. The user is asked
+         (via a system dialog) to allow the app to ignore optimisations. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+
     <application
         android:label="GL Calls"
         android:name="${applicationName}"

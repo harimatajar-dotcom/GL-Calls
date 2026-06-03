@@ -91,6 +91,24 @@ class _PermissionScreenState extends State<PermissionScreen> {
     final notificationStatus = await Permission.notification.request();
     setState(() => _notificationGranted = notificationStatus.isGranted);
 
+    // A-6: Battery-optimisation exemption. The entire background-sync
+    // architecture is built to survive being killed, but on Samsung/
+    // Xiaomi/Oppo/Vivo the OEM battery manager kills the service
+    // anyway unless the user grants this exemption. Asked once here;
+    // user can also flip it from the system Settings app.
+    if (Platform.isAndroid) {
+      try {
+        final batteryStatus =
+            await Permission.ignoreBatteryOptimizations.status;
+        if (!batteryStatus.isGranted) {
+          await Permission.ignoreBatteryOptimizations.request();
+        }
+      } catch (_) {
+        // permission_handler may throw on devices that don't expose
+        // this permission — non-fatal.
+      }
+    }
+
     if (_phoneGranted && _storageGranted && _notificationGranted) {
       _navigateToDashboard();
     } else if (phoneStatus.isPermanentlyDenied ||
