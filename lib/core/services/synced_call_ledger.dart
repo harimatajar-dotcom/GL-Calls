@@ -31,7 +31,13 @@ class SyncedCallLedger {
   static const String _inFlightKeyPrefix = 'sync_in_flight_';
   static const String _fileNameKey = 'synced_file_names_v1';
   static const int _maxEntries = 2000;
-  static const Duration _inFlightTtl = Duration(seconds: 45);
+  // A-8: Raised from 45s to 5 min. Voice recordings on a slow network
+  // can easily take longer than 45s to upload (presigned URL fetch +
+  // S3 PUT of a multi-MB m4a); the old TTL expired mid-upload, letting
+  // another isolate re-acquire the lease and POST a duplicate. Long-
+  // running calls (heartbeat-renewable) use [renewLease] below to
+  // refresh the lease while still on the wire.
+  static const Duration _inFlightTtl = Duration(minutes: 5);
 
   /// Per-isolate in-memory lock. Cheap fast-path that avoids a
   /// `SharedPreferences.reload()` for back-to-back syncs in the same
@@ -98,6 +104,19 @@ class SyncedCallLedger {
     }
     await prefs.remove('$_inFlightKeyPrefix$callId');
     _inFlightLocal.remove(callId);
+  }
+
+  /// Refresh the in-flight lease timestamp so it doesn't expire during a
+  /// long upload. Callers that hold the lease for longer than ~2 min
+  /// (e.g. large S3 PUTs on slow networks) should call this every
+  /// minute or so. No-op if the lease isn't held locally.
+  static Future<void> renewLease(String callId) async {
+    if (!_inFlightLocal.contains(callId)) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      '$_inFlightKeyPrefix$callId',
+      DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   /// Drop the in-flight lease without committing (sync failed). The next
