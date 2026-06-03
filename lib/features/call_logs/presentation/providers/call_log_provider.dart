@@ -19,14 +19,28 @@ class CallLogProvider extends ChangeNotifier {
   String get errorMessage => _errorMessage;
   bool get hasPermission => _hasPermission;
 
-  List<CallLogEntity> get incomingCalls =>
+  // A-18: Memoize the per-type filters. Previously each getter
+  // re-filtered the full _callLogs list on every UI rebuild, an O(N)
+  // walk per access; with 5000+ entries and three getters that's
+  // 15000 comparisons every frame. Cache and invalidate on load.
+  List<CallLogEntity>? _incomingCache;
+  List<CallLogEntity>? _outgoingCache;
+  List<CallLogEntity>? _missedCache;
+
+  List<CallLogEntity> get incomingCalls => _incomingCache ??=
       _callLogs.where((c) => c.callType == CallLogType.incoming).toList();
 
-  List<CallLogEntity> get outgoingCalls =>
+  List<CallLogEntity> get outgoingCalls => _outgoingCache ??=
       _callLogs.where((c) => c.callType == CallLogType.outgoing).toList();
 
-  List<CallLogEntity> get missedCalls =>
+  List<CallLogEntity> get missedCalls => _missedCache ??=
       _callLogs.where((c) => c.callType == CallLogType.missed).toList();
+
+  void _invalidateFilterCaches() {
+    _incomingCache = null;
+    _outgoingCache = null;
+    _missedCache = null;
+  }
 
   Future<void> checkPermission() async {
     _hasPermission = await repository.hasPermission();
@@ -61,6 +75,7 @@ class CallLogProvider extends ChangeNotifier {
       }
 
       _callLogs = await repository.getCallLogs();
+      _invalidateFilterCaches();
       _status = CallLogStatus.loaded;
     } catch (e) {
       _status = CallLogStatus.error;

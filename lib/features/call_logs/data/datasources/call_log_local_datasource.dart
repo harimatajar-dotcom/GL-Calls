@@ -16,7 +16,18 @@ class CallLogLocalDataSourceImpl implements CallLogLocalDataSource {
       return [];
     }
 
-    final Iterable<CallLogEntry> entries = await CallLog.get();
+    // A-18: scope the query to the last 90 days. CallLog.get() reads the
+    // entire device call history every time - on phones with years of
+    // history that can be many thousands of entries and a multi-second
+    // load every screen open. 90 days is more than enough for any
+    // dashboard view; older calls are still synced (via the recordings
+    // pathway) but not re-listed locally.
+    final now = DateTime.now();
+    final ninetyDaysAgo = now.subtract(const Duration(days: 90));
+    final Iterable<CallLogEntry> entries = await CallLog.query(
+      dateFrom: ninetyDaysAgo.millisecondsSinceEpoch,
+      dateTo: now.millisecondsSinceEpoch,
+    );
 
     return entries.map((entry) {
       return CallLogEntity(
