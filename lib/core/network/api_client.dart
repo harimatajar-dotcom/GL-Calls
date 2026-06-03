@@ -1,4 +1,6 @@
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../constants/api_constants.dart';
 
 class ApiClient {
@@ -29,7 +31,24 @@ class ApiClient {
           }
           return handler.next(options);
         },
-        onError: (error, handler) {
+        // A-16: 401 means the cached token is no longer accepted by the
+        // server (revoked, password changed elsewhere, expired). Clear
+        // the in-memory copy + the persisted prefs so the next foreground
+        // launch lands on the login screen instead of silently making
+        // unauthenticated calls. We don't auto-refresh because the
+        // server has no refresh-token endpoint - re-login is required.
+        onError: (error, handler) async {
+          if (error.response?.statusCode == 401) {
+            clearAuthToken();
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.remove('auth_token');
+              await prefs.remove('AUTH_TOKEN');
+            } catch (_) {
+              // best-effort; if prefs fail, in-memory clear still protects
+              // this isolate from re-using the dead token.
+            }
+          }
           return handler.next(error);
         },
       ),

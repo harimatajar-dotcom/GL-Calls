@@ -60,8 +60,24 @@ class AuthLocalDataSourceImpl implements AuthLocalDataSource {
 
   @override
   Future<bool> isLoggedIn() async {
-    final token = sharedPreferences.getString(authTokenKey);
-    return token != null && token.isNotEmpty;
+    // A-16: validate the token shape rather than trusting any non-empty
+    // string. JWTs are `header.payload.signature` (three dot-separated
+    // base64url segments). We don't crypto-verify here (no public key
+    // available client-side) but a length + segment-count check rejects
+    // the obvious garbage cases (empty after trim, "null", a leftover
+    // sentinel from an old build) without sending bad auth headers.
+    final raw = sharedPreferences.getString(authTokenKey) ??
+        sharedPreferences.getString(authTokenKeyAlt);
+    if (raw == null) return false;
+    final token = raw.trim();
+    if (token.isEmpty || token == 'null') return false;
+    if (token.length < 20) return false;
+    // Most server-issued tokens here are JWTs (3 segments). If a deploy
+    // ever uses an opaque token, drop this check — but warn loudly so
+    // we don't silently accept anything.
+    final segments = token.split('.').length;
+    if (segments != 3) return false;
+    return true;
   }
 
   @override
