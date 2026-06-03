@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Lightweight client-side dedupe ledger for call-sync.
@@ -44,6 +46,10 @@ class SyncedCallLedger {
   /// isolate.
   static final Set<String> _inFlightLocal = <String>{};
 
+  /// Random source used to generate per-attempt acquire tokens for the
+  /// confirmation pattern in [tryAcquire] (A-12).
+  static final Random _random = Random.secure();
+
   /// Returns true if [callId] has already been committed as synced.
   /// Does NOT check the in-flight lease — that is what [tryAcquire]
   /// is for.
@@ -76,17 +82,55 @@ class SyncedCallLedger {
     if (ids.contains(callId)) return false;
 
     // Active lease held by another isolate?
+    // A-12 note: the lease is now stored as a String "<token>|<ms>"
+    // instead of an int. We migrate transparently: a legacy int lease
+    // is read via getInt and treated as token "(legacy)".
     final leaseKey = '$_inFlightKeyPrefix$callId';
-    final leasedAt = prefs.getInt(leaseKey);
-    if (leasedAt != null) {
-      final age = DateTime.now().millisecondsSinceEpoch - leasedAt;
+    int? existingLeasedAt;
+    final rawString = prefs.getString(leaseKey);
+    if (rawString != null) {
+      final pipe = rawString.indexOf('|');
+      existingLeasedAt = pipe < 0 ? null : int.tryParse(rawString.substring(pipe + 1));
+    } else {
+      // Legacy int storage from older builds.
+      existingLeasedAt = prefs.getInt(leaseKey);
+    }
+    if (existingLeasedAt != null) {
+      final age = DateTime.now().millisecondsSinceEpoch - existingLeasedAt;
       if (age < _inFlightTtl.inMilliseconds) return false;
       // else — stale lease (crashed sync), reclaim it below.
     }
 
+    // A-12: SharedPreferences offers no atomic compare-and-swap, so
+    // two isolates can both pass the read-check above and both write
+    // their own lease. To detect that race, we write a per-attempt
+    // token, immediately reload, and only own the lease if our token
+    // is the one still stored. If a competitor's token is there
+    // instead, we release in-memory state and refuse the lease.
+    final token = _newAcquireToken();
+    final valueToStore = '$token|${DateTime.now().millisecondsSinceEpoch}';
     _inFlightLocal.add(callId);
-    await prefs.setInt(leaseKey, DateTime.now().millisecondsSinceEpoch);
+    await prefs.setString(leaseKey, valueToStore);
+
+    // Confirmation step.
+    await prefs.reload();
+    final readBack = prefs.getString(leaseKey);
+    final wonRace = readBack != null && readBack.startsWith('$token|');
+    if (!wonRace) {
+      _inFlightLocal.remove(callId);
+      return false;
+    }
     return true;
+  }
+
+  /// Generate a per-attempt token used by the [tryAcquire] confirmation
+  /// pattern. Combines a 64-bit random with a microsecond timestamp so
+  /// two attempts in the same isolate (even within the same nanosecond)
+  /// produce different tokens.
+  static String _newAcquireToken() {
+    final r = (_random.nextInt(1 << 32) << 32) | _random.nextInt(1 << 32);
+    final ts = DateTime.now().microsecondsSinceEpoch;
+    return '${r.toRadixString(16)}_${ts.toRadixString(16)}';
   }
 
   /// Mark [callId] as permanently synced and clear the in-flight lease.
@@ -110,12 +154,22 @@ class SyncedCallLedger {
   /// long upload. Callers that hold the lease for longer than ~2 min
   /// (e.g. large S3 PUTs on slow networks) should call this every
   /// minute or so. No-op if the lease isn't held locally.
+  ///
+  /// Preserves the existing acquire token (A-12) so the confirmation
+  /// pattern keeps working — we don't want a renew to look like a
+  /// fresh competitor's lease.
   static Future<void> renewLease(String callId) async {
     if (!_inFlightLocal.contains(callId)) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-      '$_inFlightKeyPrefix$callId',
-      DateTime.now().millisecondsSinceEpoch,
+    await prefs.reload();
+    final leaseKey = '$_inFlightKeyPrefix$callId';
+    final current = prefs.getString(leaseKey);
+    final tokenPart = current != null && current.contains('|')
+        ? current.substring(0, current.indexOf('|'))
+        : _newAcquireToken();
+    await prefs.setString(
+      leaseKey,
+      '$tokenPart|${DateTime.now().millisecondsSinceEpoch}',
     );
   }
 
