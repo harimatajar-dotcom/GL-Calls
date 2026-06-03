@@ -189,10 +189,18 @@ class WorkManagerService {
   }
 
   /// Enable all backup mechanisms (called when auto-sync is enabled)
+  ///
+  /// A-14: We deliberately do NOT register `serviceRecoveryTask` here.
+  /// `HealthCheckService` (AlarmManager-based, Samsung-resistant) is the
+  /// single watchdog responsible for restarting the foreground service
+  /// when it dies. Running both in parallel was duplicate work + extra
+  /// battery drain for the same outcome. WorkManager keeps the
+  /// `periodicSyncTask` job (which has a different purpose — catching
+  /// missed recordings — see A-15).
   static Future<void> enableBackupSync() async {
     await registerPeriodicSync();
-    await registerServiceRecovery();
-    debugPrint('\x1B[32m[WorkManager] Backup sync mechanisms enabled\x1B[0m');
+    debugPrint('\x1B[32m[WorkManager] Backup sync mechanisms enabled '
+        '(serviceRecoveryTask SKIPPED — HealthCheckService owns watchdog)\x1B[0m');
   }
 
   /// Disable all backup mechanisms (called when auto-sync is disabled)
