@@ -56,6 +56,20 @@ class InjectionContainer {
     _sharedPreferences = await SharedPreferences.getInstance();
     _apiClient = ApiClient();
 
+    // A-4: Rehydrate the auth token into ApiClient on startup. The token
+    // is stored in prefs at login time but ApiClient._authToken is
+    // in-memory only. Without this, a returning user opens the app and
+    // every authenticated call goes out with NO Authorization header
+    // until something else happens to repopulate the token. Both
+    // legacy ('AUTH_TOKEN') and new ('auth_token') keys are checked
+    // because the codebase has used both.
+    final cachedToken = _sharedPreferences.getString('auth_token') ??
+        _sharedPreferences.getString('AUTH_TOKEN') ??
+        '';
+    if (cachedToken.isNotEmpty) {
+      _apiClient.setAuthToken(cachedToken);
+    }
+
     // Data Sources
     _authRemoteDataSource = AuthRemoteDataSourceImpl(apiClient: _apiClient);
     _authLocalDataSource = AuthLocalDataSourceImpl(
