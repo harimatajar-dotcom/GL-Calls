@@ -344,17 +344,21 @@ void onStart(ServiceInstance service) async {
       }
     }
 
-    // Re-initialize listener if needed (self-recovery)
-    if (isInitialized && heartbeatCount % 4 == 0) {
-      // Every 2 minutes, check if listener is still active
-      try {
-        autoSyncService.stopListening();
-        autoSyncService.startListening();
-        debugPrint('\x1B[34m[BackgroundService] Listener refreshed\x1B[0m');
-      } catch (e) {
-        debugPrint('\x1B[31m[BackgroundService] Failed to refresh listener: $e\x1B[0m');
-      }
-    }
+    // A-9: Phone-state listener is NO LONGER torn down on a timer.
+    // Previously every 2 min we called stopListening()→startListening()
+    // for "self-recovery", but a CALL_ENDED arriving during the tiny
+    // window between stop and start was lost entirely - missing calls
+    // never reached the auto-sync path.
+    //
+    // The listener subscribes once at service start and stays
+    // subscribed. If it does silently die, the 15-minute AlarmManager
+    // health-check + the periodic scan-based sync covers the gap by
+    // discovering any unsynced recordings.
+    //
+    // If we ever need true listener health, the right pattern is:
+    // track last-event-timestamp on every fire, and only resubscribe
+    // when no events seen AND the device wasn't idle. That is NOT a
+    // simple periodic teardown.
 
     // Log heartbeat
     debugPrint('\x1B[34m[BackgroundService] Heartbeat #$heartbeatCount - ${DateTime.now()}\x1B[0m');
