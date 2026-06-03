@@ -93,7 +93,12 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                   String? phoneNumber = _extractPhoneNumber(fileName);
                   CallType callType = CallType.unknown;
                   String? contactName;
-                  final matchedCall = _findMatchingCallLog(stat.modified);
+                  // Pass phoneNumber so the matcher anchors on it before
+                  // falling back to time-only matching (A-1).
+                  final matchedCall = _findMatchingCallLog(
+                    stat.modified,
+                    phoneNumber: phoneNumber,
+                  );
 
                   if (matchedCall != null) {
                     phoneNumber ??= matchedCall.number;
@@ -177,8 +182,12 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                   CallType callType = CallType.unknown;
                   String? contactName;
 
-                  // Match with call log to get phone number and call type
-                  final matchedCall = _findMatchingCallLog(stat.modified);
+                  // Match with call log to get phone number and call type.
+                  // Phone-anchored matching (A-1).
+                  final matchedCall = _findMatchingCallLog(
+                    stat.modified,
+                    phoneNumber: phoneNumber,
+                  );
                   if (matchedCall != null) {
                     phoneNumber ??= matchedCall.number;
                     contactName = matchedCall.name;
@@ -274,27 +283,75 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     }
   }
 
-  /// Find matching call log entry by timestamp (within 5 minutes tolerance)
-  call_log.CallLogEntry? _findMatchingCallLog(DateTime recordingTime) {
+  /// Find the call-log entry that produced the recording at [recordingTime].
+  ///
+  /// Matching rule (in priority order):
+  ///   1. **Phone match first.** If [phoneNumber] is given, only consider
+  ///      entries whose number's last 10 digits equal the recording's
+  ///      number. Among those, pick the closest in time within the ±5 min
+  ///      window. This prevents the prior bug where two unrelated calls
+  ///      in the same 5-minute window could attribute a recording to the
+  ///      wrong contact.
+  ///   2. **Time-only fallback.** Only when the filename has no number
+  ///      do we revert to nearest-in-time. Such matches are inherently
+  ///      low-confidence — we log them so support can spot the cases.
+  call_log.CallLogEntry? _findMatchingCallLog(
+    DateTime recordingTime, {
+    String? phoneNumber,
+  }) {
     if (_callLogCache == null || _callLogCache!.isEmpty) return null;
 
-    const toleranceMinutes = 5;
-    call_log.CallLogEntry? bestMatch;
-    int smallestDiff = toleranceMinutes * 60 * 1000 + 1; // milliseconds
+    const toleranceMs = 5 * 60 * 1000;
 
+    String? wantedLast10;
+    if (phoneNumber != null && phoneNumber.isNotEmpty) {
+      final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+      if (digits.length >= 10) {
+        wantedLast10 = digits.substring(digits.length - 10);
+      }
+    }
+
+    call_log.CallLogEntry? bestMatch;
+    int smallestDiff = toleranceMs + 1;
+
+    // Pass 1: phone-anchored match. Only entries with the same last-10
+    // digits are considered.
+    if (wantedLast10 != null) {
+      for (final entry in _callLogCache!) {
+        if (entry.timestamp == null || entry.number == null) continue;
+        final entryDigits = entry.number!.replaceAll(RegExp(r'\D'), '');
+        if (entryDigits.length < 10) continue;
+        final entryLast10 = entryDigits.substring(entryDigits.length - 10);
+        if (entryLast10 != wantedLast10) continue;
+
+        final diff = (recordingTime.millisecondsSinceEpoch - entry.timestamp!).abs();
+        if (diff < toleranceMs && diff < smallestDiff) {
+          smallestDiff = diff;
+          bestMatch = entry;
+        }
+      }
+      if (bestMatch != null) return bestMatch;
+      // Phone was known but no call-log entry matches that number within
+      // the window. Returning null is the correct call here — falling
+      // back to nearest-in-time would re-introduce the very bug we just
+      // fixed (attributing a recording to an unrelated contact).
+      return null;
+    }
+
+    // Pass 2: no phone known from the filename. Fall back to time-only.
+    // Low-confidence — log so support knows when this path was used.
     for (final entry in _callLogCache!) {
       if (entry.timestamp == null) continue;
-
-      final callTime = DateTime.fromMillisecondsSinceEpoch(entry.timestamp!);
-      final diff = (recordingTime.millisecondsSinceEpoch - callTime.millisecondsSinceEpoch).abs();
-
-      // Within tolerance and closer than previous match
-      if (diff < toleranceMinutes * 60 * 1000 && diff < smallestDiff) {
+      final diff = (recordingTime.millisecondsSinceEpoch - entry.timestamp!).abs();
+      if (diff < toleranceMs && diff < smallestDiff) {
         smallestDiff = diff;
         bestMatch = entry;
       }
     }
-
+    if (bestMatch != null) {
+      _logCyan('⚠️  LOW-CONFIDENCE MATCH: no phone in filename, picked by '
+          'time only ($smallestDiff ms diff) → ${bestMatch.number}');
+    }
     return bestMatch;
   }
 
