@@ -23,6 +23,10 @@ class AutoSyncService {
   StreamSubscription<PhoneState>? _phoneStateSubscription;
   bool _wasInCall = false;
   DateTime? _callStartTime;
+  // Phone number captured from the most recent CALL_INCOMING/CALL_OUTGOING
+  // event. Used by directSyncFromCallLog so it doesn't blindly trust
+  // entries.first from the call log (A-5).
+  String? _lastSeenPhone;
 
   // Services for upload and sync
   late ApiClient _apiClient;
@@ -107,12 +111,18 @@ class AutoSyncService {
         _logBlue('Incoming call from: ${state.number}');
         _wasInCall = true;
         _callStartTime ??= DateTime.now();
+        if (state.number != null && state.number!.isNotEmpty) {
+          _lastSeenPhone = state.number;
+        }
         break;
 
       case PhoneStateStatus.CALL_OUTGOING:
         _logBlue('Outgoing call to: ${state.number}');
         _wasInCall = true;
         _callStartTime ??= DateTime.now();
+        if (state.number != null && state.number!.isNotEmpty) {
+          _lastSeenPhone = state.number;
+        }
         break;
 
       case PhoneStateStatus.NOTHING:
@@ -680,8 +690,43 @@ class AutoSyncService {
         return false;
       }
 
-      // Get the most recent call
-      final latestCall = entries.first;
+      // A-5: If we know which phone the user was just on (captured from
+      // CALL_INCOMING/CALL_OUTGOING), pick that call from the log
+      // instead of `entries.first`. Otherwise back-to-back calls land
+      // us on a stale "most recent" entry that belongs to a different
+      // contact, which then becomes the wrong call_id/direction.
+      call_log.CallLogEntry? selected;
+      if (_lastSeenPhone != null && _lastSeenPhone!.isNotEmpty) {
+        final wantedDigits = _lastSeenPhone!.replaceAll(RegExp(r'\D'), '');
+        final wantedLast10 = wantedDigits.length >= 10
+            ? wantedDigits.substring(wantedDigits.length - 10)
+            : wantedDigits;
+        for (final entry in entries) {
+          if (entry.number == null) continue;
+          final entryDigits = entry.number!.replaceAll(RegExp(r'\D'), '');
+          final entryLast10 = entryDigits.length >= 10
+              ? entryDigits.substring(entryDigits.length - 10)
+              : entryDigits;
+          if (entryLast10 == wantedLast10) {
+            selected = entry;
+            break;
+          }
+        }
+        if (selected == null) {
+          _logRed('❌ Phone $_lastSeenPhone not found in recent call log — '
+              'NOT syncing (refuse to attribute to a different contact)');
+          return false;
+        }
+      } else {
+        // No phone known (e.g. first run, listener missed events). Old
+        // behavior — sync the latest entry. This is best-effort and is
+        // logged so support can see when it was used.
+        selected = entries.first;
+        _logBlue('⚠️  No _lastSeenPhone — falling back to most-recent entry '
+            '(${selected.number}). Best-effort only.');
+      }
+
+      final latestCall = selected;
       // Use fallback duration if call_log returns 0
       final duration = (latestCall.duration ?? 0) > 0
           ? latestCall.duration!
@@ -901,10 +946,13 @@ class AutoSyncService {
         }
       }
 
-      // If no match by number, use the most recent call
-      final latestCall = entries.first;
-      _logGreen('   No match found, using most recent: ${latestCall.callType} (${latestCall.callType?.name})');
-      return _convertCallLogType(latestCall.callType);
+      // A-5: NO "most recent call" fallback. If the number doesn't match
+      // any call-log entry in the window, return CallType.unknown so the
+      // caller can mark the call as low-confidence (or skip). Borrowing
+      // another call's type/direction silently attributes the wrong
+      // direction to the call on back-to-back unrelated calls.
+      _logRed('   ❌ NO MATCH for $phoneNumber in call log → returning CallType.unknown');
+      return CallType.unknown;
     } catch (e) {
       _logRed('Error getting call type from log: $e');
       return CallType.unknown;
