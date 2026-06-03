@@ -159,6 +159,18 @@ class AutoSyncService {
   /// (WorkManager / FlutterBackgroundService) cannot race past us
   /// between the dedupe check and the network call.
   Future<bool> _syncIfNew(CallSyncData data) async {
+    // A-11: Filename history is a second-line dedup defense alongside
+    // the deterministic call_id. The repository's _syncIfNew already
+    // does this; this branch (auto-sync) was missing the check, so
+    // when call_id drifted across UTC-minute boundaries between sync
+    // paths (despite our other fixes) a duplicate could still slip
+    // through here. Check filename first; mark it on success.
+    final fileName = data.fileName ?? '';
+    if (fileName.isNotEmpty && await SyncedCallLedger.isFileNameSynced(fileName)) {
+      _logBlue('⏭️  Skipping — file_name "$fileName" already synced (history match)');
+      return true;
+    }
+
     final acquired = await SyncedCallLedger.tryAcquire(data.callId);
     if (!acquired) {
       _logBlue('⏭️  Skipping duplicate sync — call_id ${data.callId} already synced or in-flight');
@@ -168,6 +180,9 @@ class AutoSyncService {
       final ok = await _callSyncDataSource.syncCall(data);
       if (ok) {
         await SyncedCallLedger.commit(data.callId);
+        if (fileName.isNotEmpty) {
+          await SyncedCallLedger.markFileNameSynced(fileName);
+        }
       } else {
         await SyncedCallLedger.release(data.callId);
         // Push a system notification with sound so the user notices even
