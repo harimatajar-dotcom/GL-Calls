@@ -391,16 +391,28 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
 
   @override
   Future<bool> syncCalls(List<CallSyncData> callsData) async {
+    // A-3 fix: loop and POST each call. Previously this method took a
+    // list but only sent callsData.first while the success loop logged
+    // ALL items as "SYNCED" — a future batch caller would silently drop
+    // every call after the first AND mark them done. The wire endpoint
+    // accepts one call per POST, so we iterate.
+    if (callsData.isEmpty) return true;
+    _logBlue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    _logBlue('📞 SYNCING ${callsData.length} CALL(S)...');
+
+    var allOk = true;
+    for (final call in callsData) {
+      final ok = await _postOne(call);
+      if (!ok) allOk = false;
+    }
+    return allOk;
+  }
+
+  /// POST a single call to the sync endpoint. Returns true on 200/202.
+  Future<bool> _postOne(CallSyncData call) async {
     try {
-      _logBlue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      _logBlue('📞 SYNCING ${callsData.length} CALL(S)...');
+      final body = call.toJson();
 
-      // New API: send each call as direct body (not wrapped in 'data' array)
-      // Endpoint: {{baseUrl}}/api/mobile/gl-dialer/calls
-      final firstCall = callsData.first;
-      final body = firstCall.toJson();
-
-      // Log full API call details in green
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logGreen('[API] 🚀 SYNC CALL REQUEST');
       _logGreen('[API] URL: ${ApiConstants.baseUrl}${ApiConstants.syncCalls}');
@@ -414,7 +426,6 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
         data: body,
       );
 
-      // Log raw API response in yellow
       _logYellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _logYellow('📡 RAW API RESPONSE');
       _logYellow('   Status Code: ${response.statusCode}');
@@ -422,24 +433,15 @@ class CallSyncDataSourceImpl implements CallSyncDataSource {
       _logYellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
       if (response.statusCode == 200 || response.statusCode == 202) {
-        _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        _logGreen('✅ CALL SYNC API RESPONSE');
-        _logGreen('   Status: ${response.statusCode}');
-        _logGreen('   Response: ${response.data}');
-        _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-        for (final call in callsData) {
-          _logGreen('✅ SYNCED: ${call.phoneNumber}');
-          _logGreen('   Call ID: ${call.callId}');
-          _logGreen('   Call Start At: ${call.callStartAt}');
-          _logGreen('   Duration: ${call.duration}s');
-          _logGreen('   Event Type: ${call.eventType}');
-          _logGreen('   Direction: ${call.direction}');
-          if (call.recordingUrl != null) {
-            _logGreen('   Recording URL: ${call.recordingUrl}');
-          }
+        _logGreen('✅ SYNCED: ${call.phoneNumber}');
+        _logGreen('   Call ID: ${call.callId}');
+        _logGreen('   Call Start At: ${call.callStartAt}');
+        _logGreen('   Duration: ${call.duration}s');
+        _logGreen('   Event Type: ${call.eventType}');
+        _logGreen('   Direction: ${call.direction}');
+        if (call.recordingUrl != null) {
+          _logGreen('   Recording URL: ${call.recordingUrl}');
         }
-        _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         return true;
       } else {
         _logRed('❌ SYNC FAILED: Status ${response.statusCode}');
