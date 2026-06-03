@@ -105,9 +105,15 @@
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
             android:exported="false"/>
+        <!-- A-17: enabled=true so health-check alarms re-arm after a
+             reboot. With enabled=false the AlarmManager-based watchdog
+             (HealthCheckService.startHealthCheck, scheduled with
+             rescheduleOnReboot:true) silently lost its schedule on every
+             device restart, and on Samsung/Xiaomi the foreground service
+             often dies before the user opens the app to re-arm. -->
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
