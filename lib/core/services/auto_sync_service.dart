@@ -236,6 +236,14 @@ class AutoSyncService {
   }
 
   /// Auto-sync the latest recording after call ends
+  /// Public entry point used by the WorkManager backup-sync job (A-15).
+  /// Triggers the same latest-recording scan that fires on CALL_ENDED,
+  /// catching anything the live listener missed during a service-kill
+  /// window.
+  Future<void> runPeriodicScanAndSync() async {
+    await _autoSyncLatestRecording();
+  }
+
   Future<void> _autoSyncLatestRecording({int fallbackDuration = 0}) async {
     try {
       _logGreen('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

@@ -41,6 +41,12 @@ void callbackDispatcher() {
 }
 
 /// Execute periodic sync - checks for unsynced recordings
+///
+/// A-15: This used to only do anything when isAutoDirectSyncEnabled was
+/// true. In plain auto-sync mode (the default for most users) the task
+/// woke up, checked the flag, and returned without actually syncing
+/// anything — making it inert. Now it runs the latest-recording scan
+/// in either mode so missed recordings get caught.
 Future<bool> _executePeriodicSync() async {
   debugPrint('\x1B[33m[WorkManager] Starting periodic sync...\x1B[0m');
 
@@ -57,9 +63,19 @@ Future<bool> _executePeriodicSync() async {
   final autoSyncService = AutoSyncService();
   await autoSyncService.initialize();
 
-  // Check for any missed recordings that need syncing
+  // Direct-sync mode: query the call log and sync the most recent call
+  // even without a recording file.
   if (isAutoDirectSyncEnabled) {
     await autoSyncService.directSyncFromCallLog();
+  }
+  // Plain auto-sync mode: scan for unsynced recording files and sync
+  // them. Previously this branch did nothing.
+  if (isAutoSyncEnabled) {
+    try {
+      await autoSyncService.runPeriodicScanAndSync();
+    } catch (e) {
+      debugPrint('\x1B[31m[WorkManager] Scan sync failed: $e\x1B[0m');
+    }
   }
 
   debugPrint('\x1B[32m[WorkManager] Periodic sync completed\x1B[0m');
