@@ -195,6 +195,75 @@ class SyncedCallLedger {
     await commit(callId);
   }
 
+  // ── phone|minute markers (issue-fix 2A/2B + queue confirmation) ─────
+  //
+  // The call_id hash includes direction and an exact minute bucket, so
+  // two sync paths that disagree on either produce DIFFERENT ids for the
+  // SAME physical call — the classic duplicate. These markers record the
+  // direction-free "phone|minute" identity of every committed call so a
+  // second path can be blocked even when its call_id differs.
+
+  static const String _phoneMinuteKey = 'synced_phone_minute_v1';
+
+  /// Normalize to `last10digits|utcMinuteIso` for [callTime]'s bucket.
+  static String phoneMinuteKeyFor(String phoneNumber, DateTime callTime) {
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    final last10 =
+        digits.length >= 10 ? digits.substring(digits.length - 10) : digits;
+    final u = callTime.toUtc();
+    final minute =
+        DateTime.utc(u.year, u.month, u.day, u.hour, u.minute).toIso8601String();
+    return '$last10|$minute';
+  }
+
+  /// Record that a call to/from [phoneNumber] around [callTime] committed.
+  static Future<void> markPhoneMinuteSynced(
+      String phoneNumber, DateTime callTime) async {
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return; // 'unknown' etc — nothing stable to key on
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final list =
+        List<String>.from(prefs.getStringList(_phoneMinuteKey) ?? const []);
+    final key = phoneMinuteKeyFor(phoneNumber, callTime);
+    if (!list.contains(key)) {
+      list.add(key);
+      if (list.length > _maxEntries) {
+        list.removeRange(0, list.length - _maxEntries);
+      }
+      await prefs.setStringList(_phoneMinuteKey, list);
+    }
+  }
+
+  /// True if a call to/from [phoneNumber] committed within
+  /// ±[toleranceBuckets] minute-buckets of [callTime].
+  ///
+  /// Tolerance exists because different sync paths anchor on slightly
+  /// different timestamps for the same call (call-log start vs file
+  /// mtime); ±1–3 minutes catches that drift. Trade-off acknowledged:
+  /// two GENUINE calls to the same number within the tolerance window
+  /// are treated as one — with the recommended tolerance of 1 for the
+  /// duplicate gate that means back-to-back redials inside ~1 min
+  /// collapse, which matches the pre-A-2 behaviour users accepted.
+  static Future<bool> isPhoneMinuteSynced(
+    String phoneNumber,
+    DateTime callTime, {
+    int toleranceBuckets = 1,
+  }) async {
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final list = prefs.getStringList(_phoneMinuteKey) ?? const [];
+    if (list.isEmpty) return false;
+    for (int i = -toleranceBuckets; i <= toleranceBuckets; i++) {
+      final key = phoneMinuteKeyFor(
+          phoneNumber, callTime.add(Duration(minutes: i)));
+      if (list.contains(key)) return true;
+    }
+    return false;
+  }
+
   /// Returns true if a recording with [fileName] has already been synced.
   ///
   /// This is a second-line defense alongside the deterministic call_id:

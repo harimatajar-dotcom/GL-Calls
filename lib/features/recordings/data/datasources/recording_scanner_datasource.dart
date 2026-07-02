@@ -147,13 +147,19 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
 
   @override
   Future<RecordingModel?> scanForLatestUnsyncedRecording() async {
-    _logCyan('🔍 OPTIMIZED SCAN: Looking for latest recording (last 1 hour)...');
+    _logCyan('🔍 OPTIMIZED SCAN: Looking for latest recording (last 24 hours)...');
 
+    // Issue-fix 1A: window widened from 1 hour to 24 hours. With the old
+    // 1-hour ceiling, any recording made while the service was dead for
+    // longer (phone off overnight, OEM battery kill) became "too old"
+    // and was silently never synced. 24 h covers an overnight outage;
+    // the pending-sync queue + filename/call_id dedup make re-scanning
+    // the wider window safe (already-synced files are skipped).
     final now = DateTime.now();
-    final oneHourAgo = now.subtract(const Duration(hours: 1));
+    final windowStart = now.subtract(const Duration(hours: 24));
     RecordingModel? latestRecording;
 
-    // Load call logs only for the last 1 hour
+    // Load call logs for the same 24-hour window (for matching)
     await _loadCallLogsOptimized();
 
     // Get recording paths (custom folder or default paths)
@@ -170,8 +176,8 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
                 try {
                   final stat = await entity.stat();
 
-                  // Skip files older than 1 hour
-                  if (stat.modified.isBefore(oneHourAgo)) {
+                  // Skip files older than the scan window (24 h)
+                  if (stat.modified.isBefore(windowStart)) {
                     continue;
                   }
 
@@ -245,15 +251,19 @@ class RecordingScannerDataSourceImpl implements RecordingScannerDataSource {
     try {
       final hasAccess = await Permission.phone.status;
       if (hasAccess.isGranted) {
+        // Issue-fix 1A companion: must cover the same 24 h window as
+        // scanForLatestUnsyncedRecording, otherwise recordings older
+        // than 1 h could never find their call-log match (wrong phone /
+        // wrong timestamp → different call_id → duplicate risk).
         final now = DateTime.now();
-        final lastHour = now.subtract(const Duration(hours: 1));
+        final windowStart = now.subtract(const Duration(hours: 24));
 
         final entries = await call_log.CallLog.query(
-          dateFrom: lastHour.millisecondsSinceEpoch,
+          dateFrom: windowStart.millisecondsSinceEpoch,
           dateTo: now.millisecondsSinceEpoch,
         );
         _callLogCache = entries.toList();
-        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries (last 1h - optimized)');
+        _logCyan('📋 Loaded ${_callLogCache?.length ?? 0} call log entries (last 24h - optimized)');
       }
     } catch (e) {
       debugPrint('Error loading call logs: $e');

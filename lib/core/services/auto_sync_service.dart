@@ -16,6 +16,7 @@ import '../../features/recordings/data/models/recording_model.dart';
 import '../../features/recordings/domain/entities/recording_entity.dart';
 import '../network/api_client.dart';
 import 'log_service.dart';
+import 'pending_sync_queue.dart';
 import 'sync_failure_notifier.dart';
 import 'synced_call_ledger.dart';
 
@@ -107,9 +108,21 @@ class AutoSyncService {
           // between, stale _callStartTime from THIS call would be
           // reused and the next callDuration would be wildly inflated.
           _callStartTime = null;
+          // Issue-fix 1B: persist the "sync owed" intent BEFORE any
+          // in-memory delay. If the OS kills this isolate during the
+          // 10s wait (common right after a call on Samsung/Xiaomi),
+          // the queue entry survives and the next trigger (service
+          // restart, WorkManager 15-min tick) re-attempts the sync.
+          PendingSyncQueue.enqueue(PendingSync.forCallEnd(
+            phone: _lastSeenPhone,
+            callEndedAt: DateTime.now(),
+            fallbackDuration: callDuration,
+          ));
           // Wait longer for call log to be updated (10 seconds)
-          Future.delayed(const Duration(seconds: 10), () {
-            _autoSyncLatestRecording(fallbackDuration: callDuration);
+          Future.delayed(const Duration(seconds: 10), () async {
+            await _autoSyncLatestRecording(fallbackDuration: callDuration);
+            // Confirm/clear queue entries for anything that committed.
+            await drainPendingQueue();
           });
         }
         break;
@@ -237,11 +250,70 @@ class AutoSyncService {
 
   /// Auto-sync the latest recording after call ends
   /// Public entry point used by the WorkManager backup-sync job (A-15).
-  /// Triggers the same latest-recording scan that fires on CALL_ENDED,
-  /// catching anything the live listener missed during a service-kill
-  /// window.
+  /// Drains the durable pending-sync queue first (calls that owed a sync
+  /// when a previous attempt was killed), then runs the same
+  /// latest-recording scan that fires on CALL_ENDED as a final sweep.
   Future<void> runPeriodicScanAndSync() async {
+    await drainPendingQueue();
     await _autoSyncLatestRecording();
+  }
+
+  /// Issue-fix 1A+1B: re-attempt every owed sync in the durable queue.
+  ///
+  /// For each entry: run the recording scan+sync (bounded retries happen
+  /// naturally — the queue holds the entry until confirmed), then ask the
+  /// ledger whether a call for that phone around that time actually
+  /// committed. Only then is the entry removed. Unconfirmable entries
+  /// expire after 7 days (see [PendingSyncQueue]) so they can't wedge
+  /// the queue forever.
+  Future<void> drainPendingQueue() async {
+    final entries = await PendingSyncQueue.drainableEntries();
+    if (entries.isEmpty) return;
+    _logBlue('📋 Pending-sync queue: ${entries.length} owed sync(s)');
+
+    for (final e in entries) {
+      // Estimate call START from the persisted end-time minus duration —
+      // the ledger's phone|minute marker is keyed on call start.
+      final estStart =
+          e.callEndedAt.subtract(Duration(seconds: e.fallbackDuration));
+
+      // Already committed by an earlier attempt? Just clear the entry.
+      if (e.phone != null &&
+          e.phone!.isNotEmpty &&
+          await SyncedCallLedger.isPhoneMinuteSynced(
+            e.phone!,
+            estStart,
+            toleranceBuckets: 3,
+          )) {
+        _logBlue('   ✓ ${e.id} already committed — clearing');
+        await PendingSyncQueue.removeEntry(e.id);
+        continue;
+      }
+
+      // Re-attempt. The scan handles "find recording → upload → sync";
+      // the ledger prevents duplicate POSTs if it actually succeeded
+      // before and we just couldn't confirm.
+      await _autoSyncLatestRecording(fallbackDuration: e.fallbackDuration);
+
+      // Confirm after the attempt.
+      if (e.phone != null &&
+          e.phone!.isNotEmpty &&
+          await SyncedCallLedger.isPhoneMinuteSynced(
+            e.phone!,
+            estStart,
+            toleranceBuckets: 3,
+          )) {
+        _logGreen('   ✓ ${e.id} confirmed synced — clearing');
+        await PendingSyncQueue.removeEntry(e.id);
+      } else if (e.phone == null || e.phone!.isEmpty) {
+        // No phone to confirm against — one best-effort attempt is all
+        // we can do; keep the entry for the retry window but don't let
+        // it drive more than the scan it just ran.
+        _logBlue('   ? ${e.id} unconfirmable (no phone) — left in queue');
+      } else {
+        _logBlue('   ✗ ${e.id} not confirmed yet — will retry next cycle');
+      }
+    }
   }
 
   Future<void> _autoSyncLatestRecording({int fallbackDuration = 0}) async {
