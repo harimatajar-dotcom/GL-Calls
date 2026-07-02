@@ -184,6 +184,25 @@ class AutoSyncService {
       return true;
     }
 
+    // Issue-fix 2A/2B: direction-free duplicate gate. The call_id hash
+    // includes direction + an exact minute bucket, so two sync paths
+    // that disagree on either (call log not yet populated → direction
+    // '?'; file-mtime vs call-log-time straddling a minute boundary)
+    // produce DIFFERENT ids for the SAME call and both POST. This gate
+    // asks the ledger "did a call to/from this number commit within ±1
+    // minute?" and blocks the second path regardless of its call_id.
+    final callStart = _tryParseCallStart(data.callStartAt);
+    if (callStart != null &&
+        await SyncedCallLedger.isPhoneMinuteSynced(
+          data.phoneNumber,
+          callStart,
+          toleranceBuckets: 1,
+        )) {
+      _logBlue('⏭️  Skipping — ${data.phoneNumber} already synced within ±1 min '
+          '(cross-path duplicate gate)');
+      return true;
+    }
+
     final acquired = await SyncedCallLedger.tryAcquire(data.callId);
     if (!acquired) {
       _logBlue('⏭️  Skipping duplicate sync — call_id ${data.callId} already synced or in-flight');
@@ -195,6 +214,10 @@ class AutoSyncService {
         await SyncedCallLedger.commit(data.callId);
         if (fileName.isNotEmpty) {
           await SyncedCallLedger.markFileNameSynced(fileName);
+        }
+        if (callStart != null) {
+          await SyncedCallLedger.markPhoneMinuteSynced(
+              data.phoneNumber, callStart);
         }
       } else {
         await SyncedCallLedger.release(data.callId);
@@ -214,6 +237,35 @@ class AutoSyncService {
       );
       rethrow;
     }
+  }
+
+  /// Parse the wire-format call_start_at back into a DateTime for the
+  /// phone|minute duplicate gate. Handles both ISO-8601 (UTC 'Z') and
+  /// the legacy 'yyyy-MM-dd HH:mm:ss' local form. Returns null on
+  /// garbage — the gate is then skipped (call_id dedup still applies).
+  DateTime? _tryParseCallStart(String callStartAt) {
+    try {
+      return DateTime.parse(callStartAt);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Issue-fix 2D: deterministic synthetic filename for the direct-sync
+  /// and dummy-file paths. These used to embed DateTime.now(), giving
+  /// the SAME call a brand-new filename on every retry — which made the
+  /// filename-history dedup gate useless for them. Keyed on
+  /// (last-10-digits, UTC minute of the call) instead, a retry now
+  /// regenerates the same name and the filename gate can block it.
+  String _syntheticFileName(String prefix, String? phone, DateTime callTime) {
+    final digits = (phone ?? '').replaceAll(RegExp(r'\D'), '');
+    final last10 =
+        digits.length >= 10 ? digits.substring(digits.length - 10) : digits;
+    final u = callTime.toUtc();
+    final bucket =
+        '${u.year}${u.month.toString().padLeft(2, '0')}${u.day.toString().padLeft(2, '0')}'
+        '${u.hour.toString().padLeft(2, '0')}${u.minute.toString().padLeft(2, '0')}';
+    return '${prefix}_${last10.isEmpty ? 'unknown' : last10}_$bucket.wav';
   }
 
   /// Reload auth token from SharedPreferences (call before each sync)
@@ -462,17 +514,22 @@ class AutoSyncService {
           _logGreen('   ⚠️ Direction: INBOUND (default for ${latestCall.callType})');
       }
 
-      // Create a RecordingModel from call log data
+      // Create a RecordingModel from call log data.
+      // Issue-fix 2D: filename derived from phone+minute (not now()) so
+      // a retry of the same call regenerates the same name and the
+      // filename dedup gate can block a duplicate.
+      final callLogTime = DateTime.fromMillisecondsSinceEpoch(
+          latestCall.timestamp ?? now.millisecondsSinceEpoch);
       final recording = RecordingModel(
         id: null,
-        fileName: 'call_${DateTime.now().millisecondsSinceEpoch}.wav',
+        fileName: _syntheticFileName('call', latestCall.number, callLogTime),
         filePath: dummyFilePath,
         localPath: dummyFilePath,
         phoneNumber: latestCall.number ?? 'unknown',
         contactName: latestCall.name,
         duration: duration,
         fileSize: 16044, // Size of silent.wav
-        createdAt: DateTime.fromMillisecondsSinceEpoch(latestCall.timestamp ?? now.millisecondsSinceEpoch),
+        createdAt: callLogTime,
         callType: callType,
       );
 
@@ -550,10 +607,12 @@ class AutoSyncService {
               ? fallbackDuration
               : await _getDurationFromCallLog(recording.phoneNumber));
 
-      // Create a modified recording with the dummy file path
+      // Create a modified recording with the dummy file path.
+      // Issue-fix 2D: deterministic filename (phone+minute, not now()).
       recordingToUpload = RecordingModel(
         id: recording.id,
-        fileName: 'call_${DateTime.now().millisecondsSinceEpoch}.wav',
+        fileName: _syntheticFileName(
+            'call', recording.phoneNumber, recording.createdAt),
         filePath: dummyFilePath,
         localPath: dummyFilePath,
         phoneNumber: recording.phoneNumber,
@@ -887,18 +946,24 @@ class AutoSyncService {
       // Placeholder URL for direct sync
       const placeholderUrl = 'https://glcalls.s3.amazonaws.com/no-recording.wav';
 
-      // Store call data locally
+      // Store call data locally.
+      // Issue-fix 2D: deterministic filename (phone+minute, not now())
+      // so a retried direct-sync of the same call hits the filename
+      // dedup gate instead of slipping past it with a fresh name.
       _logGreen('Storing call data locally...');
+      final directSyncTime = DateTime.fromMillisecondsSinceEpoch(
+          latestCall.timestamp ?? now.millisecondsSinceEpoch);
       final recording = RecordingModel(
         id: null,
-        fileName: 'direct_sync_${DateTime.now().millisecondsSinceEpoch}.wav',
+        fileName:
+            _syntheticFileName('direct_sync', latestCall.number, directSyncTime),
         filePath: 'direct_sync', // No actual file for direct sync
         localPath: 'direct_sync',
         phoneNumber: latestCall.number ?? 'unknown',
         contactName: latestCall.name,
         duration: duration,
         fileSize: 0, // No file for direct sync
-        createdAt: DateTime.fromMillisecondsSinceEpoch(latestCall.timestamp ?? now.millisecondsSinceEpoch),
+        createdAt: directSyncTime,
         callType: callType,
         isUploaded: false,
       );

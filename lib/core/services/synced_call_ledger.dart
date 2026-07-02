@@ -32,7 +32,12 @@ class SyncedCallLedger {
   static const String _key = 'synced_call_ids_v1';
   static const String _inFlightKeyPrefix = 'sync_in_flight_';
   static const String _fileNameKey = 'synced_file_names_v1';
-  static const int _maxEntries = 2000;
+  // Issue-fix 2F: raised from 2000 → 5000. With FIFO eviction at 2000,
+  // a high-volume device could evict an old call_id whose recording
+  // file was still on disk; a later re-scan would then re-sync it as
+  // "new" → duplicate. 5000 ids ≈ months of heavy usage; storage cost
+  // is a few hundred KB of SharedPreferences.
+  static const int _maxEntries = 5000;
   // A-8: Raised from 45s to 5 min. Voice recordings on a slow network
   // can easily take longer than 45s to upload (presigned URL fetch +
   // S3 PUT of a multi-MB m4a); the old TTL expired mid-upload, letting

@@ -84,7 +84,13 @@ void main() {
       expect(a, c);
     });
 
-    test('direction does NOT change the id (the inbound/outbound dup fix)', () {
+    // A-2 contract change: direction IS part of the hash so two genuine
+    // calls in opposite directions within the same minute (quick
+    // callback) get distinct ids instead of the second being dropped.
+    // The duplicate risk when direction is MISdetected is handled one
+    // layer up by SyncedCallLedger.isPhoneMinuteSynced — the
+    // direction-free phone|minute gate in _syncIfNew.
+    test('direction DOES change the id (A-2: same-minute callback kept)', () {
       final t = DateTime.utc(2026, 5, 14, 10, 27);
       final inbound = CallSyncData.buildDeterministicCallId(
         phoneNumber: '9876543210',
@@ -96,9 +102,42 @@ void main() {
         callTime: t,
         direction: 'outbound',
       );
-      expect(inbound, outbound,
-          reason: 'A real call has one direction; including it in the hash '
-              'creates a phantom duplicate when direction is misdetected.');
+      expect(inbound, isNot(outbound),
+          reason: 'Same-minute inbound + outbound to one number are two '
+              'REAL calls; hashing them identically silently dropped the '
+              'second one (issue A-2).');
+    });
+
+    test('direction token is normalized (casing/synonyms → same id)', () {
+      final t = DateTime.utc(2026, 5, 14, 10, 27);
+      final a = CallSyncData.buildDeterministicCallId(
+        phoneNumber: '9876543210',
+        callTime: t,
+        direction: 'outbound',
+      );
+      final b = CallSyncData.buildDeterministicCallId(
+        phoneNumber: '9876543210',
+        callTime: t,
+        direction: 'OUTGOING',
+      );
+      expect(a, b,
+          reason: 'outbound/outgoing/out must collapse to one token or '
+              'paths using different vocab would produce duplicate ids.');
+    });
+
+    test('unknown direction is stable (null == garbage == "?")', () {
+      final t = DateTime.utc(2026, 5, 14, 10, 27);
+      final a = CallSyncData.buildDeterministicCallId(
+        phoneNumber: '9876543210',
+        callTime: t,
+        direction: null,
+      );
+      final b = CallSyncData.buildDeterministicCallId(
+        phoneNumber: '9876543210',
+        callTime: t,
+        direction: 'whatever',
+      );
+      expect(a, b);
     });
 
     test('different minute → different id (real distinct calls)', () {

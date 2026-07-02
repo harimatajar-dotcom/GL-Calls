@@ -219,6 +219,21 @@ class RecordingRepositoryImpl implements RecordingRepository {
       return true;
     }
 
+    // Issue-fix 2A/2B: direction-free duplicate gate (mirrors
+    // AutoSyncService._syncIfNew). Blocks a second path whose call_id
+    // differs only because of direction-token or minute-bucket drift.
+    final callStart = _tryParseCallStart(data.callStartAt);
+    if (callStart != null &&
+        await SyncedCallLedger.isPhoneMinuteSynced(
+          data.phoneNumber,
+          callStart,
+          toleranceBuckets: 1,
+        )) {
+      _logYellow('⏭️  Skipping — ${data.phoneNumber} already synced within ±1 min '
+          '(cross-path duplicate gate)');
+      return true;
+    }
+
     final acquired = await SyncedCallLedger.tryAcquire(data.callId);
     if (!acquired) {
       _logYellow('⏭️  Skipping duplicate sync — call_id ${data.callId} already synced or in-flight');
@@ -230,6 +245,10 @@ class RecordingRepositoryImpl implements RecordingRepository {
         await SyncedCallLedger.commit(data.callId);
         if (fileName.isNotEmpty) {
           await SyncedCallLedger.markFileNameSynced(fileName);
+        }
+        if (callStart != null) {
+          await SyncedCallLedger.markPhoneMinuteSynced(
+              data.phoneNumber, callStart);
         }
       } else {
         await SyncedCallLedger.release(data.callId);
@@ -246,6 +265,18 @@ class RecordingRepositoryImpl implements RecordingRepository {
         reason: 'Network error: ${e.toString().split('\n').first}',
       );
       rethrow;
+    }
+  }
+
+  /// Parse the wire-format call_start_at for the phone|minute duplicate
+  /// gate. Handles ISO-8601 and the legacy 'yyyy-MM-dd HH:mm:ss' form
+  /// (Dart's DateTime.parse accepts the space separator). Null on
+  /// garbage — the gate is then skipped (call_id dedup still applies).
+  DateTime? _tryParseCallStart(String callStartAt) {
+    try {
+      return DateTime.parse(callStartAt);
+    } catch (_) {
+      return null;
     }
   }
 
